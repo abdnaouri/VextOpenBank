@@ -54,13 +54,17 @@ export default {
       // 3. Response Scrubbing: Strip internal server signatures and sensitive cookies
       const responseHeaders = new Headers(response.headers);
       responseHeaders.delete("Server");
+      responseHeaders.delete("server");
       responseHeaders.delete("x-powered-by");
       responseHeaders.delete("x-volterra-location");
+      responseHeaders.delete("rndr-id");
+      responseHeaders.delete("x-render-origin-server");
       
-      // Ensure HSTS and anti-sniff headers
+      // Ensure HSTS, anti-sniff, and framing protection headers
       responseHeaders.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
       responseHeaders.set("X-Content-Type-Options", "nosniff");
       responseHeaders.set("X-Frame-Options", "DENY");
+      responseHeaders.set("Referrer-Policy", "strict-origin-when-cross-origin");
 
       return new Response(response.body, {
         status: response.status,
