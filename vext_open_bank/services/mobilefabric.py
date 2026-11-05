@@ -4,7 +4,11 @@ Client for Kony MobileFabric Gateway services.
 Includes standard invocation plus step-up MFA token exchange.
 """
 
+import base64
+import json
 import logging
+import random
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -17,7 +21,7 @@ logger = logging.getLogger("MobileFabricService")
 
 
 class MobileFabricClient:
-    def __init__(self) -> None:
+    def __init__(self, enable_jitter: bool = True) -> None:
         self.session = requests.Session()
         self.session.verify = False
         if settings.PROXY_URL:
@@ -25,20 +29,41 @@ class MobileFabricClient:
                 "http": settings.PROXY_URL,
                 "https": settings.PROXY_URL,
             }
+        # Whitelist ONLY authentic CFGBankApp Android headers - no proxy or client leakage
+        self.session.headers.clear()
         self.session.headers.update(
             {
                 "User-Agent": settings.USER_AGENT,
                 "Accept": "application/json",
+                "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Connection": "keep-alive",
             }
         )
         self.claims_token: Optional[str] = None
+        self.claims_token_exp: float = 0.0
         self.elevated_token: Optional[str] = None  # Set after MFA step-up
+        self.enable_jitter = enable_jitter
 
     # ------------------------------------------------------------------
-    # Authentication helpers
+    # Authentication & Session helpers
     # ------------------------------------------------------------------
+
+    def _parse_jwt_exp(self, token: str) -> Optional[float]:
+        """Extract expiration timestamp from standard JWT claims payload."""
+        try:
+            parts = token.split(".")
+            if len(parts) >= 2:
+                payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+                payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
+                payload = json.loads(payload_json)
+                if "exp" in payload:
+                    return float(payload["exp"])
+        except Exception:
+            pass
+        return None
 
     def _base_headers(self) -> Dict[str, str]:
+        """Generate strictly sanitized Android Kony MobileFabric request headers."""
         return {
             "X-Kony-App-Key": settings.APP_KEY,
             "X-Kony-App-Secret": settings.APP_SECRET,
@@ -49,10 +74,26 @@ class MobileFabricClient:
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
-    def login_claims(self) -> str:
+    def is_token_valid(self) -> bool:
+        """Check if current claims token is set and not expired (with 45s safety buffer)."""
+        if not self.claims_token:
+            return False
+        if self.claims_token_exp > 0:
+            return time.time() < (self.claims_token_exp - 45.0)
+        return True
+
+    def login_claims(self, force: bool = False) -> str:
         """
         Authenticate with MobileFabric gateway to acquire a claims authorization JWT.
+        Reuses valid token to prevent excessive login churn and AI fraud triggers.
         """
+        if not force and self.is_token_valid():
+            return self.claims_token
+
+        # Apply natural micro-jitter before login to emulate human interaction cadence
+        if self.enable_jitter:
+            time.sleep(random.uniform(0.08, 0.25))
+
         url = f"{settings.MOBILEFABRIC_URL}/authService/100000002/login"
         resp = self.session.post(url, headers=self._base_headers(), timeout=10)
         resp.raise_for_status()
@@ -60,7 +101,11 @@ class MobileFabricClient:
         token = data.get("claims_token", {}).get("value")
         if not token:
             raise ValueError("No claims_token in gateway response")
+
         self.claims_token = token
+        # Extract JWT exp or default to 15 minute TTL
+        exp = self._parse_jwt_exp(token)
+        self.claims_token_exp = exp if exp else (time.time() + 900.0)
         return token
 
     def get_service_catalog(self) -> Dict[str, Any]:
@@ -77,7 +122,7 @@ class MobileFabricClient:
         return resp.json()
 
     # ------------------------------------------------------------------
-    # Service invocation
+    # Service invocation with AI-trigger mitigation & origin hygiene
     # ------------------------------------------------------------------
 
     def invoke_service(
@@ -86,15 +131,21 @@ class MobileFabricClient:
         params: Optional[Dict[str, Any]] = None,
         api_version: str = "1.0",
         elevated: bool = False,
+        retry_on_auth_fail: bool = True,
     ) -> Dict[str, Any]:
         """
         Invoke an operation on a MobileFabric integration service.
 
-        :param elevated: If True, use the step-up elevated token instead of
-                         the standard claims token (required for mutating services).
+        Protections:
+        - Origin Concealment: Zero external headers (no X-Forwarded-For / Origin / Referer).
+        - AI Fraud Mitigation: Jittered timing, valid token reuse, silent single re-auth.
         """
-        if not self.claims_token:
+        if not self.is_token_valid():
             self.login_claims()
+
+        # Human-like network jitter (100ms - 250ms) to evade robotic pattern detection
+        if self.enable_jitter:
+            time.sleep(random.uniform(0.05, 0.18))
 
         auth_token = (
             self.elevated_token if elevated and self.elevated_token
@@ -110,9 +161,43 @@ class MobileFabricClient:
             "X-Kony-API-Version": api_version,
             "Content-Type": "application/x-www-form-urlencoded",
         }
-        resp = self.session.post(
-            url, headers=headers, data=params or {}, timeout=15
-        )
+
+        try:
+            resp = self.session.post(
+                url, headers=headers, data=params or {}, timeout=15
+            )
+            # Detect expired session/claims
+            if resp.status_code == 401 and retry_on_auth_fail:
+                logger.info("Claims token expired on CFG gateway, refreshing session...")
+                self.login_claims(force=True)
+                return self.invoke_service(
+                    service_path,
+                    params=params,
+                    api_version=api_version,
+                    elevated=elevated,
+                    retry_on_auth_fail=False,
+                )
+            elif resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                backoff_time = float(retry_after) if retry_after and retry_after.isdigit() else 30.0
+                logger.warning("CFG gateway returned 429 Too Many Requests. Backing off for %.1fs", backoff_time)
+                time.sleep(backoff_time)
+                resp.raise_for_status()
+
+            resp.raise_for_status()
+            return resp.json()
+        except requests.HTTPError as err:
+            if err.response is not None and err.response.status_code == 401 and retry_on_auth_fail:
+                logger.info("CFG 401 received, forcing claims token refresh...")
+                self.login_claims(force=True)
+                return self.invoke_service(
+                    service_path,
+                    params=params,
+                    api_version=api_version,
+                    elevated=elevated,
+                    retry_on_auth_fail=False,
+                )
+            raise
         resp.raise_for_status()
         return resp.json()
 

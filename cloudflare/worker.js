@@ -13,21 +13,28 @@ export default {
     const url = new URL(request.url);
     const clientIP = request.headers.get("CF-Connecting-IP") || "unknown";
 
-    // 1. Strict Internal Authentication Verification
+    // 1. Strict Internal Authentication & Route-Aware Access Gate
     const authHeader = request.headers.get("Authorization") || "";
     const internalKeyHeader = request.headers.get("X-Vext-Key") || "";
+    const envoismsSecret = request.headers.get("X-EnvoiSMS-Secret") || "";
     const expectedKey = env.INTERNAL_API_KEY || "vext_internal_live_key_9f8e7d6c5b4a";
+    const expectedEnvoiSecret = env.ENVOISMS_SECRET || "cf_shield_origin_auth_837291048576";
+
+    // Public endpoints that require zero authentication (e.g. read-only bank instructions)
+    const isPublicRoute = url.pathname === "/api/v1/envoisms/instructions";
 
     const isAuthorized =
+      isPublicRoute ||
       internalKeyHeader === expectedKey ||
       authHeader === `Bearer ${expectedKey}` ||
-      authHeader === expectedKey;
+      authHeader === expectedKey ||
+      (url.pathname.startsWith("/api/v1/envoisms") && (envoismsSecret === expectedEnvoiSecret || envoismsSecret === expectedKey));
 
     if (!isAuthorized) {
       return new Response(
         JSON.stringify({
           error: "Unauthorized",
-          detail: "Access restricted to authorized internal connections only. Valid X-Vext-Key required.",
+          detail: "Access restricted to authorized internal connections only. Valid X-Vext-Key or EnvoiSMS authorization required.",
         }),
         {
           status: 401,

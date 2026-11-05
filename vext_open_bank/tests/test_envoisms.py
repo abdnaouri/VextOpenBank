@@ -8,7 +8,7 @@ import uuid
 from fastapi.testclient import TestClient
 from vext_open_bank.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"x-origin-shield": "cf_shield_origin_auth_837291048576"})
 
 def test_envoisms_instructions():
     res = client.get("/api/v1/envoisms/instructions?reference=ENV-10001&amount_mad=275.0")
@@ -69,3 +69,32 @@ def test_envoisms_reconciliation_flow():
     })
     assert check_dup.status_code == 200
     assert check_dup.json()["status"] == "ALREADY_RECONCILED"
+
+
+def test_public_instructions_without_shield():
+    # Calling instructions without origin shield header must succeed cleanly
+    raw_client = TestClient(app)
+    res = raw_client.get("/api/v1/envoisms/instructions")
+    assert res.status_code == 200
+    assert res.json()["bank_name"] == "CFG Bank"
+
+
+def test_bridge_sync_status():
+    res = client.get("/api/v1/envoisms/sync-status")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "OPERATIONAL"
+    assert data["anti_throttling_cooldown_seconds"] == 25.0
+    assert data["local_ledger_ready"] is True
+
+
+def test_mobilefabric_origin_isolation():
+    from vext_open_bank.services.mobilefabric import mf_client
+    headers = mf_client._base_headers()
+    # Confirm strict mobile headers
+    assert headers["X-Kony-Platform-Type"] == "android"
+    # Ensure no origin leakage
+    assert "X-Forwarded-For" not in headers
+    assert "CF-Connecting-IP" not in headers
+    assert "Origin" not in headers
+    assert "Referer" not in headers

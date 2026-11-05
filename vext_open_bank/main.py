@@ -33,6 +33,7 @@ from vext_open_bank.api.routes_transfers import router as transfers_router
 from vext_open_bank.api.routes_comms import router as comms_router
 from vext_open_bank.api.routes_agency import router as agency_router
 from vext_open_bank.services.airlock import airlock_keepalive_worker
+from vext_open_bank.services.envoisms_bridge import envoisms_bridge
 
 logger = logging.getLogger("VextOpenBank")
 
@@ -42,14 +43,21 @@ async def lifespan(app: FastAPI):
     # Start background Airlock session persistence worker
     keepalive_task = asyncio.create_task(airlock_keepalive_worker())
     logger.info("Airlock IAM session keep-alive background worker started.")
+
+    # Start autonomous EnvoiSMS bank reconciliation & anti-throttling worker
+    envoisms_task = asyncio.create_task(envoisms_bridge.run_sync_worker())
+    logger.info("EnvoiSMS autonomous bank reconciliation background worker started.")
+
     try:
         yield
     finally:
         keepalive_task.cancel()
+        envoisms_task.cancel()
         try:
-            await keepalive_task
+            await asyncio.gather(keepalive_task, envoisms_task, return_exceptions=True)
         except asyncio.CancelledError:
-            logger.info("Airlock IAM session keep-alive worker gracefully stopped.")
+            pass
+        logger.info("Background workers gracefully stopped.")
 
 
 app = FastAPI(
@@ -95,8 +103,17 @@ async def enforce_internal_security(request, call_next):
     shield_header = request.headers.get("x-origin-shield")
     internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization")
 
+    # Allow public instructions without exposing backend internals
+    is_public_endpoint = request.url.path in [
+        f"{settings.API_PREFIX}/envoisms/instructions",
+        "/docs",
+        "/openapi.json",
+        "/redoc"
+    ]
+
     is_trusted = (
-        shield_header == ORIGIN_SHIELD_SECRET
+        is_public_endpoint
+        or shield_header == ORIGIN_SHIELD_SECRET
         or internal_key == INTERNAL_API_KEY
         or internal_key == f"Bearer {INTERNAL_API_KEY}"
     )

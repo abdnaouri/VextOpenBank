@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from vext_open_bank.main import app
 from vext_open_bank.services.mobilefabric import mf_client
 
-client = TestClient(app)
+client = TestClient(app, headers={"x-origin-shield": "cf_shield_origin_auth_837291048576"})
 
 
 # ---------------------------------------------------------------------------
