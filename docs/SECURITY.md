@@ -24,10 +24,10 @@
           ├── X-Origin-Shield == ORIGIN_SHIELD_SECRET? (Allow)
           ├── X-Vext-Key == INTERNAL_API_KEY? (Allow)
           ├── Path == /api/v1/envoisms/instructions? (Allow Public)
-          └── Else: 403 Forbidden ("Direct origin access blocked.")
+          └── Else: Camouflage Decoy (200 Idle / 404 Not Found - Zero Cues)
 ```
 
-Any direct request made to `https://vext-open-bank.onrender.com` that does not carry the cryptographic `X-Origin-Shield` header injected by Cloudflare is immediately dropped with HTTP `403 Forbidden`.
+Any direct request made to `https://vext-open-bank.onrender.com` that does not carry the cryptographic `X-Origin-Shield` header injected by Cloudflare is routed to a silent camouflage decoy (`Static Asset Dispatcher` idle status on `/`, and generic `404 Not Found` across all probed endpoints). No security cues, internal gateway hints, or authentication requirements are ever disclosed.
 
 ---
 

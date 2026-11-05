@@ -31,17 +31,20 @@ export default {
       (url.pathname.startsWith("/api/v1/envoisms") && (envoismsSecret === expectedEnvoiSecret || envoismsSecret === expectedKey));
 
     if (!isAuthorized) {
+      if (url.pathname === "/") {
+        return new Response(
+          JSON.stringify({ status: "idle", module: "static-asset-dispatcher", workers: 0 }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
       return new Response(
-        JSON.stringify({
-          error: "Unauthorized",
-          detail: "Access restricted to authorized internal connections only. Valid X-Vext-Key or EnvoiSMS authorization required.",
-        }),
+        JSON.stringify({ detail: "Not Found" }),
         {
-          status: 401,
-          headers: {
-            "Content-Type": "application/json",
-            "WWW-Authenticate": "Bearer realm=\"VextInternal\"",
-          },
+          status: 404,
+          headers: { "Content-Type": "application/json" },
         }
       );
     }

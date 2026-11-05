@@ -104,12 +104,7 @@ async def enforce_internal_security(request, call_next):
     internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization")
 
     # Allow public instructions without exposing backend internals
-    is_public_endpoint = request.url.path in [
-        f"{settings.API_PREFIX}/envoisms/instructions",
-        "/docs",
-        "/openapi.json",
-        "/redoc"
-    ]
+    is_public_endpoint = request.url.path == f"{settings.API_PREFIX}/envoisms/instructions"
 
     is_trusted = (
         is_public_endpoint
@@ -119,17 +114,35 @@ async def enforce_internal_security(request, call_next):
     )
 
     if not is_trusted:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": "Forbidden",
-                "detail": (
-                    "Direct origin access blocked. "
-                    "Access must route through Cloudflare Edge with authorized credentials."
-                ),
-            },
-        )
+        # Camouflage decoy: do not reveal any security, origin, or gateway cues
+        accept_header = request.headers.get("accept", "")
+        if request.url.path == "/" and "text/html" in accept_header:
+            from fastapi.responses import HTMLResponse
+            return HTMLResponse(
+                status_code=200,
+                content="""<!DOCTYPE html>
+<html>
+<head><title>Service Status</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; background:#fbfbfb; color:#555;">
+  <div style="text-align:center; padding:40px; border:1px solid #eaeaea; border-radius:8px; background:#fff; max-width:400px; box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+    <h3 style="color:#222; margin-top:0;">Static Asset Dispatcher</h3>
+    <p style="font-size:14px; line-height:1.5;">Worker process idle. No asynchronous tasks scheduled.</p>
+  </div>
+</body>
+</html>"""
+            )
+        elif request.url.path == "/":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=200,
+                content={"status": "idle", "module": "static-asset-dispatcher", "workers": 0}
+            )
+        else:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Not Found"}
+            )
 
     return await call_next(request)
 
