@@ -141,11 +141,6 @@ async def airlock_keepalive_worker() -> None:
     KEEPALIVE_INTERVAL_SECONDS seconds.  Designed to run inside a FastAPI
     `lifespan` context manager.
     """
-    proxy_map = (
-        {"http://": settings.PROXY_URL, "https://": settings.PROXY_URL}
-        if settings.PROXY_URL
-        else None
-    )
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -153,13 +148,20 @@ async def airlock_keepalive_worker() -> None:
         ),
         "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
     }
+    client_kwargs = {
+        "verify": False,
+        "headers": headers,
+        "follow_redirects": True,
+    }
+    if settings.PROXY_URL:
+        # Support both httpx modern (proxy=) and legacy (proxies=)
+        try:
+            client_kwargs["proxy"] = settings.PROXY_URL
+        except Exception:
+            client_kwargs["proxies"] = {"http://": settings.PROXY_URL, "https://": settings.PROXY_URL}
+
     try:
-        async with httpx.AsyncClient(
-            verify=False,
-            proxies=proxy_map,
-            headers=headers,
-            follow_redirects=True,
-        ) as client:
+        async with httpx.AsyncClient(**client_kwargs) as client:
             # Perform an initial keep-alive immediately
             await _keepalive_once(client)
             while True:
