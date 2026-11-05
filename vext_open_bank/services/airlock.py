@@ -17,6 +17,7 @@ import urllib3
 from bs4 import BeautifulSoup
 
 from vext_open_bank.core.config import settings
+from vext_open_bank.core.exchange_logger import exchange_logger
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger("AirlockService")
@@ -73,20 +74,46 @@ class AirlockWebClient:
                 "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
             }
         )
-        resp = sess.get(self._access_url, timeout=10)
-        cookies = dict(sess.cookies)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        has_loader = bool(soup.find("div", {"id": "iamLoader"}))
-        has_loginapp = bool(soup.find("iam-loginapp"))
+        start_t = time.time()
+        try:
+            resp = sess.get(self._access_url, timeout=10)
+            duration_ms = (time.time() - start_t) * 1000.0
+            cookies = dict(sess.cookies)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            has_loader = bool(soup.find("div", {"id": "iamLoader"}))
+            has_loginapp = bool(soup.find("iam-loginapp"))
 
-        return {
-            "status_code": resp.status_code,
-            "final_url": str(resp.url),
-            "cookies": list(cookies.keys()),
-            "airlock_iam_ready": has_loader and has_loginapp,
-            "server": resp.headers.get("server", "unknown"),
-            "location": resp.headers.get("x-volterra-location", "unknown"),
-        }
+            res = {
+                "status_code": resp.status_code,
+                "final_url": str(resp.url),
+                "cookies": list(cookies.keys()),
+                "airlock_iam_ready": has_loader and has_loginapp,
+                "server": resp.headers.get("server", "unknown"),
+                "location": resp.headers.get("x-volterra-location", "unknown"),
+            }
+
+            exchange_logger.log_exchange(
+                exchange_type="AIRLOCK_PORTAL_CHECK",
+                target=self._access_url,
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                response_data=res,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+            )
+
+            return res
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="AIRLOCK_PORTAL_CHECK",
+                target=self._access_url,
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+            )
+            raise
 
 
 airlock_web = AirlockWebClient()
@@ -98,13 +125,36 @@ airlock_web = AirlockWebClient()
 
 async def _fetch_csrf_token(client: httpx.AsyncClient) -> Optional[str]:
     """Parse the rotating CSRF token from /CSRFT759.js."""
+    base = settings.AIRLOCK_PORTAL_URL.rstrip("/")
+    target = f"{base}/CSRFT759.js"
+    start_t = time.time()
     try:
-        base = settings.AIRLOCK_PORTAL_URL.rstrip("/")
-        resp = await client.get(f"{base}/CSRFT759.js", timeout=10)
+        resp = await client.get(target, timeout=10)
+        duration_ms = (time.time() - start_t) * 1000.0
         # Token is typically: var csrfToken = "abc123";
         match = re.search(r'["\']([A-Za-z0-9_\-]{16,})["\']', resp.text)
-        return match.group(1) if match else None
+        token = match.group(1) if match else None
+
+        exchange_logger.log_exchange(
+            exchange_type="AIRLOCK_CSRF_FETCH",
+            target=target,
+            direction="OUTBOUND",
+            status_code=resp.status_code,
+            response_data={"csrf_token_found": bool(token)},
+            headers=dict(resp.headers),
+            duration_ms=duration_ms,
+        )
+        return token
     except Exception as exc:
+        duration_ms = (time.time() - start_t) * 1000.0
+        exchange_logger.log_exchange(
+            exchange_type="AIRLOCK_CSRF_FETCH",
+            target=target,
+            direction="OUTBOUND",
+            status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+            response_data={"error": str(exc)},
+            duration_ms=duration_ms,
+        )
         logger.warning("CSRF fetch failed: %s", exc)
         return None
 
@@ -112,10 +162,12 @@ async def _fetch_csrf_token(client: httpx.AsyncClient) -> Optional[str]:
 async def _keepalive_once(client: httpx.AsyncClient) -> None:
     """Perform one keep-alive poll and refresh stored session state."""
     base = settings.AIRLOCK_PORTAL_URL.rstrip("/")
+    start_t = time.time()
     try:
         resp = await client.get(
             f"{base}/protected/self-service/flows/", timeout=10
         )
+        duration_ms = (time.time() - start_t) * 1000.0
         csrf = await _fetch_csrf_token(client)
         al_sess = client.cookies.get("AL_SESS-S")
         _session_state.update(
@@ -125,6 +177,15 @@ async def _keepalive_once(client: httpx.AsyncClient) -> None:
                 "refreshed_at": time.time(),
             }
         )
+        exchange_logger.log_exchange(
+            exchange_type="AIRLOCK_KEEPALIVE_POLL",
+            target=f"{base}/protected/self-service/flows/",
+            direction="OUTBOUND",
+            status_code=resp.status_code,
+            response_data={"al_sess_present": bool(al_sess), "csrf_present": bool(csrf)},
+            headers=dict(resp.headers),
+            duration_ms=duration_ms,
+        )
         logger.debug(
             "Airlock keep-alive OK — status=%s AL_SESS-S=%s CSRF=%s",
             resp.status_code,
@@ -132,6 +193,15 @@ async def _keepalive_once(client: httpx.AsyncClient) -> None:
             bool(csrf),
         )
     except Exception as exc:
+        duration_ms = (time.time() - start_t) * 1000.0
+        exchange_logger.log_exchange(
+            exchange_type="AIRLOCK_KEEPALIVE_POLL",
+            target=f"{base}/protected/self-service/flows/",
+            direction="OUTBOUND",
+            status_code=500,
+            response_data={"error": str(exc)},
+            duration_ms=duration_ms,
+        )
         logger.warning("Airlock keep-alive failed: %s", exc)
 
 

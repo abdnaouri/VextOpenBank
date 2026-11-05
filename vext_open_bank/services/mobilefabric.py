@@ -15,6 +15,7 @@ import requests
 import urllib3
 
 from vext_open_bank.core.config import settings
+from vext_open_bank.core.exchange_logger import exchange_logger
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger("MobileFabricService")
@@ -95,18 +96,44 @@ class MobileFabricClient:
             time.sleep(random.uniform(0.08, 0.25))
 
         url = f"{settings.MOBILEFABRIC_URL}/authService/100000002/login"
-        resp = self.session.post(url, headers=self._base_headers(), timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        token = data.get("claims_token", {}).get("value")
-        if not token:
-            raise ValueError("No claims_token in gateway response")
+        start_t = time.time()
+        try:
+            resp = self.session.post(url, headers=self._base_headers(), timeout=10)
+            duration_ms = (time.time() - start_t) * 1000.0
+            resp.raise_for_status()
+            data = resp.json()
+            token = data.get("claims_token", {}).get("value")
+            if not token:
+                raise ValueError("No claims_token in gateway response")
 
-        self.claims_token = token
-        # Extract JWT exp or default to 15 minute TTL
-        exp = self._parse_jwt_exp(token)
-        self.claims_token_exp = exp if exp else (time.time() + 900.0)
-        return token
+            exchange_logger.log_exchange(
+                exchange_type="CFG_AUTH_LOGIN",
+                target="/authService/100000002/login",
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                request_data={"device_id": settings.DEVICE_ID},
+                response_data=data,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+            )
+
+            self.claims_token = token
+            # Extract JWT exp or default to 15 minute TTL
+            exp = self._parse_jwt_exp(token)
+            self.claims_token_exp = exp if exp else (time.time() + 900.0)
+            return token
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="CFG_AUTH_LOGIN",
+                target="/authService/100000002/login",
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                request_data={"device_id": settings.DEVICE_ID},
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+            )
+            raise
 
     def get_service_catalog(self) -> Dict[str, Any]:
         """
@@ -117,9 +144,33 @@ class MobileFabricClient:
             "X-Kony-App-Key": settings.APP_KEY,
             "X-Kony-App-Secret": settings.APP_SECRET,
         }
-        resp = self.session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        start_t = time.time()
+        try:
+            resp = self.session.get(url, headers=headers, timeout=10)
+            duration_ms = (time.time() - start_t) * 1000.0
+            resp.raise_for_status()
+            data = resp.json()
+            exchange_logger.log_exchange(
+                exchange_type="CFG_SERVICE_CATALOG",
+                target="/authService/100000002/appconfig",
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                response_data=data,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+            )
+            return data
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="CFG_SERVICE_CATALOG",
+                target="/authService/100000002/appconfig",
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+            )
+            raise
 
     # ------------------------------------------------------------------
     # Service invocation with AI-trigger mitigation & origin hygiene
@@ -162,10 +213,30 @@ class MobileFabricClient:
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
+        start_t = time.time()
         try:
             resp = self.session.post(
                 url, headers=headers, data=params or {}, timeout=15
             )
+            duration_ms = (time.time() - start_t) * 1000.0
+
+            try:
+                resp_data = resp.json()
+            except Exception:
+                resp_data = {"raw_text": resp.text[:500]}
+
+            exchange_logger.log_exchange(
+                exchange_type="CFG_MOBILEFABRIC_INVOKE",
+                target=f"/services/{service_path}",
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                request_data=params or {},
+                response_data=resp_data,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+                metadata={"elevated": elevated, "service_path": service_path},
+            )
+
             # Detect expired session/claims
             if resp.status_code == 401 and retry_on_auth_fail:
                 logger.info("Claims token expired on CFG gateway, refreshing session...")
@@ -185,8 +256,9 @@ class MobileFabricClient:
                 resp.raise_for_status()
 
             resp.raise_for_status()
-            return resp.json()
+            return resp_data if isinstance(resp_data, dict) else resp.json()
         except requests.HTTPError as err:
+            duration_ms = (time.time() - start_t) * 1000.0
             if err.response is not None and err.response.status_code == 401 and retry_on_auth_fail:
                 logger.info("CFG 401 received, forcing claims token refresh...")
                 self.login_claims(force=True)
@@ -198,8 +270,19 @@ class MobileFabricClient:
                     retry_on_auth_fail=False,
                 )
             raise
-        resp.raise_for_status()
-        return resp.json()
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="CFG_MOBILEFABRIC_INVOKE",
+                target=f"/services/{service_path}",
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                request_data=params or {},
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+                metadata={"elevated": elevated, "service_path": service_path},
+            )
+            raise
 
     # ------------------------------------------------------------------
     # Step-Up MFA token exchange

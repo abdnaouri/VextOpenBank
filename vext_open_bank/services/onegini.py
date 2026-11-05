@@ -7,9 +7,11 @@ import uuid
 import json
 import logging
 from typing import Dict, Any, Optional
+import time
 import requests
 import urllib3
 from vext_open_bank.core.config import settings
+from vext_open_bank.core.exchange_logger import exchange_logger
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger("OneginiService")
@@ -42,9 +44,39 @@ class OneginiClient:
             "onegini_sdk_platform": "android",
             "onegini_sdk_platform_version": "14",
         }
-        resp = self.session.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        start_t = time.time()
+        try:
+            resp = self.session.post(url, json=payload, timeout=10)
+            duration_ms = (time.time() - start_t) * 1000.0
+            try:
+                resp_data = resp.json()
+            except Exception:
+                resp_data = {"raw_text": resp.text[:500]}
+
+            exchange_logger.log_exchange(
+                exchange_type="ONEGINI_GET_CHALLENGE",
+                target="/oauth/v2/client/challenge",
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                request_data=payload,
+                response_data=resp_data,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+            )
+            resp.raise_for_status()
+            return resp_data if isinstance(resp_data, dict) else resp.json()
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="ONEGINI_GET_CHALLENGE",
+                target="/oauth/v2/client/challenge",
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                request_data=payload,
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+            )
+            raise
 
     def validate_client(self, client_assertion: str, software_statement: str) -> Dict[str, Any]:
         """Validate client credentials against Token Server."""
@@ -54,8 +86,38 @@ class OneginiClient:
             "client_assertion": client_assertion,
             "software_statement": software_statement,
         }
-        resp = self.session.post(url, json=payload, timeout=10)
-        return resp.json()
+        start_t = time.time()
+        try:
+            resp = self.session.post(url, json=payload, timeout=10)
+            duration_ms = (time.time() - start_t) * 1000.0
+            try:
+                resp_data = resp.json()
+            except Exception:
+                resp_data = {"raw_text": resp.text[:500]}
+
+            exchange_logger.log_exchange(
+                exchange_type="ONEGINI_VALIDATE_CLIENT",
+                target="/oauth/v3/client/validate",
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                request_data=payload,
+                response_data=resp_data,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+            )
+            return resp_data if isinstance(resp_data, dict) else resp.json()
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="ONEGINI_VALIDATE_CLIENT",
+                target="/oauth/v3/client/validate",
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                request_data=payload,
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+            )
+            raise
 
     def login_custom_idp(
         self,
@@ -74,8 +136,38 @@ class OneginiClient:
             "data": inner_data,
             "scope": ["read"],
         }
-        resp = self.session.post(url, json=payload, timeout=10)
-        return resp.json()
+        start_t = time.time()
+        try:
+            resp = self.session.post(url, json=payload, timeout=10)
+            duration_ms = (time.time() - start_t) * 1000.0
+            try:
+                resp_data = resp.json()
+            except Exception:
+                resp_data = {"raw_text": resp.text[:500]}
+
+            exchange_logger.log_exchange(
+                exchange_type="ONEGINI_LOGIN_CUSTOM_IDP",
+                target="/oauth/v2/custom-registration/cfg_idp_airlock_iam/complete",
+                direction="OUTBOUND",
+                status_code=resp.status_code,
+                request_data=payload,
+                response_data=resp_data,
+                headers=dict(resp.headers),
+                duration_ms=duration_ms,
+            )
+            return resp_data if isinstance(resp_data, dict) else resp.json()
+        except Exception as exc:
+            duration_ms = (time.time() - start_t) * 1000.0
+            exchange_logger.log_exchange(
+                exchange_type="ONEGINI_LOGIN_CUSTOM_IDP",
+                target="/oauth/v2/custom-registration/cfg_idp_airlock_iam/complete",
+                direction="OUTBOUND",
+                status_code=getattr(getattr(exc, "response", None), "status_code", 500),
+                request_data=payload,
+                response_data={"error": str(exc)},
+                duration_ms=duration_ms,
+            )
+            raise
 
 
 onegini_client = OneginiClient()

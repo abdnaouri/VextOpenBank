@@ -15,26 +15,37 @@ Key guarantees:
      to 3 600 s, capped at 10 attempts (then marked DEAD_LETTER).
   5. Race-condition guard — reconciliation wrapped in a single SQLite transaction;
      INSERT OR IGNORE on unique topup_id prevents double credit on concurrent calls.
+  6. Structured Exchange Telemetry — logs inbound/outbound exchanges for auditability.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import os
 import random
+import secrets
 import sqlite3
 import threading
 import time
 import urllib.request
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+
+from vext_open_bank.core.exchange_logger import exchange_logger
 
 logger = logging.getLogger("EnvoiSMSBridge")
 
 DATABASE_PATH = "/tmp/vext_envoisms_reconciliation.db"
-SHARED_WEBHOOK_SECRET = os.getenv("ENVOISMS_VEXT_SECRET", "")
+
+# Dynamically sourced HMAC webhook secret; if unset, generate ephemeral runtime secret
+SHARED_WEBHOOK_SECRET = (
+    os.getenv("ENVOISMS_VEXT_SECRET")
+    or os.getenv("ENVOISMS_SECRET")
+    or secrets.token_hex(32)
+)
 
 # ---------------------------------------------------------------------------
 # Multi-tenant webhook routing — extend here for new SaaS clients.
@@ -51,7 +62,7 @@ TENANT_WEBHOOK_URLS: Dict[str, str] = {
 }
 
 TENANT_SECRETS: Dict[str, str] = {
-    "ENV": os.getenv("ENVOISMS_VEXT_SECRET", ""),
+    "ENV": os.getenv("ENVOISMS_VEXT_SECRET", SHARED_WEBHOOK_SECRET),
     "MED": os.getenv("MEDIUNIT_VEXT_SECRET", ""),
     "BAC": os.getenv("BAC_VEXT_SECRET", ""),
 }
@@ -234,7 +245,7 @@ class EnvoiSMSBridge:
             target_url   = row["target_url"]
             payload_json = row["payload_json"]
             attempts     = row["attempts"]
-            secret       = TENANT_SECRETS.get(tenant, "")
+            secret       = TENANT_SECRETS.get(tenant, SHARED_WEBHOOK_SECRET)
 
             if not target_url:
                 self._mark_outbox_dead(outbox_id, "No target_url configured for tenant")
@@ -334,13 +345,25 @@ class EnvoiSMSBridge:
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             """, (bank_tx_id, amount_mad, sender_name, sender_rib, motif, val_date, now_str))
             conn.commit()
-        return {
+
+        res = {
             "bank_tx_id": bank_tx_id,
             "amount_mad": amount_mad,
             "sender_name": sender_name,
             "motif": motif,
             "recorded_at": now_str,
         }
+
+        exchange_logger.log_exchange(
+            exchange_type="CFG_TRANSFER_INGESTION",
+            target="record_incoming_bank_transfer",
+            direction="INBOUND",
+            status_code=200,
+            request_data={"bank_tx_id": bank_tx_id, "amount_mad": amount_mad, "sender_name": sender_name, "motif": motif},
+            response_data=res,
+        )
+
+        return res
 
     def register_or_update_intent(
         self,
@@ -559,18 +582,28 @@ class EnvoiSMSBridge:
         if not skip_async_trigger:
             threading.Thread(target=self.dispatch_pending_webhooks, daemon=True).start()
 
-        return True, {
+        result = {
             "status": "CONFIRMED",
             "message": f"Virement bancaire de {amount_mad:,.2f} MAD confirmé avec succès sur CFG Bank !",
             "details": confirmation_payload,
         }
+
+        exchange_logger.log_exchange(
+            exchange_type="ENVOISMS_RECONCILIATION_MATCH",
+            target="reconcile_topup",
+            direction="INTERNAL_SYNC",
+            status_code=200,
+            request_data={"topup_id": topup_id, "amount_mad": amount_mad, "reference": reference},
+            response_data={"status": "CONFIRMED", "bank_tx_id": bank_tx_id},
+        )
+
+        return True, result
 
     async def run_sync_worker(self) -> None:
         """
         Async background worker that periodically dispatches pending outbox webhooks.
         Runs every MIN_SYNC_INTERVAL seconds. Called from FastAPI lifespan.
         """
-        import asyncio
         while True:
             try:
                 self.dispatch_pending_webhooks()

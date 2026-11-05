@@ -4,9 +4,9 @@ Automated Pytest Suite for VextOpenBank Advanced & Unexposed Features
 
 import pytest
 from fastapi.testclient import TestClient
-from vext_open_bank.main import app
+from vext_open_bank.main import app, ORIGIN_SHIELD_SECRET
 
-client = TestClient(app, headers={"x-origin-shield": "cf_shield_origin_auth_837291048576"})
+client = TestClient(app, headers={"x-origin-shield": ORIGIN_SHIELD_SECRET})
 
 def test_root_and_dashboard():
     res = client.get("/")

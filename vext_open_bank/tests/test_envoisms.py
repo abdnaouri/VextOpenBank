@@ -7,9 +7,9 @@ import pytest
 import time
 import uuid
 from fastapi.testclient import TestClient
-from vext_open_bank.main import app
+from vext_open_bank.main import app, ORIGIN_SHIELD_SECRET
 
-client = TestClient(app, headers={"x-origin-shield": "cf_shield_origin_auth_837291048576"})
+client = TestClient(app, headers={"x-origin-shield": ORIGIN_SHIELD_SECRET})
 
 def test_envoisms_instructions():
     res = client.get("/api/v1/envoisms/instructions?reference=ENV-10001&amount_mad=275.0")
@@ -99,6 +99,28 @@ def test_mobilefabric_origin_isolation():
     assert "CF-Connecting-IP" not in headers
     assert "Origin" not in headers
     assert "Referer" not in headers
+
+
+def test_camouflage_decoy_untrusted_requests():
+    # Client without shield or key headers (simulating direct internet scanners)
+    untrusted = TestClient(app)
+
+    # 1. Probing protected routes yields 404 with zero cues
+    res_probe = untrusted.post("/api/v1/envoisms/check-topup", json={"topup_id": "test"})
+    assert res_probe.status_code == 404
+    assert res_probe.json() == {"detail": "Not Found"}
+    assert "Cloudflare" not in res_probe.text
+    assert "blocked" not in res_probe.text
+
+    # 2. Hitting root with JSON yields benign idle asset worker
+    res_root_json = untrusted.get("/", headers={"accept": "application/json"})
+    assert res_root_json.status_code == 200
+    assert res_root_json.json()["module"] == "static-asset-dispatcher"
+
+    # 3. Hitting root with HTML yields benign maintenance page
+    res_root_html = untrusted.get("/", headers={"accept": "text/html"})
+    assert res_root_html.status_code == 200
+    assert "Static Asset Dispatcher" in res_root_html.text
 
 
 # ---------------------------------------------------------------------------
