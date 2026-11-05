@@ -153,17 +153,20 @@ async def airlock_keepalive_worker() -> None:
         ),
         "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
     }
-    async with httpx.AsyncClient(
-        verify=False,
-        proxies=proxy_map,
-        headers=headers,
-        follow_redirects=True,
-    ) as client:
-        # Perform an initial keep-alive immediately
-        await _keepalive_once(client)
-        while True:
-            await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
+    try:
+        async with httpx.AsyncClient(
+            verify=False,
+            proxies=proxy_map,
+            headers=headers,
+            follow_redirects=True,
+        ) as client:
+            # Perform an initial keep-alive immediately
             await _keepalive_once(client)
+            while True:
+                await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
+                await _keepalive_once(client)
+    except Exception as exc:
+        logger.warning("Airlock background worker exited with: %s", exc)
 
 
 def get_session_state() -> Dict[str, Any]:
