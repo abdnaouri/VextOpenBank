@@ -10,7 +10,7 @@ services:
     dockerfilePath: ./cloudflare/Dockerfile
     plan: free
     region: frankfurt
-    healthCheckPath: /api/v1/auth/status
+    healthCheckPath: /
     envVars:
       - key: PORT
         value: 8000
