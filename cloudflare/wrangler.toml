@@ -1,0 +1,15 @@
+# ==============================================================================
+# Cloudflare Worker Edge Shield & Reverse Proxy
+# Provides edge rate limiting, JWT validation, and header scrubbing
+# ==============================================================================
+
+name = "vext-open-bank-edge"
+main = "worker.js"
+compatibility_date = "2024-09-01"
+account_id = "10d74fab3a9cf06d055a28be30d5e764"
+
+# Environment variables (non-secret)
+[vars]
+BACKEND_ORIGIN = "https://httpbin.org"
+MAX_REQUESTS_PER_MINUTE = "60"
+

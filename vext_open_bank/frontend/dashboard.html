@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VextOpenBank — CFG Bank High-Performance Suite</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0b0f19;
+            --bg-secondary: #121826;
+            --bg-card: #1a2234;
+            --bg-card-hover: #222d44;
+            --cfg-gold: #c5a059;
+            --cfg-gold-light: #e6c587;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border: #2a3449;
+            --border-focus: #c5a059;
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 20px;
+            --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            background: linear-gradient(180deg, #161e31 0%, var(--bg-secondary) 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 1.25rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .brand-badge {
+            background: linear-gradient(135deg, var(--cfg-gold) 0%, #99732e 100%);
+            color: #000;
+            font-weight: 700;
+            padding: 0.35rem 0.75rem;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+        }
+
+        .brand-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-title span {
+            color: var(--cfg-gold-light);
+        }
+
+        .header-meta {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+            padding: 0.35rem 0.8rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            font-size: 0.75rem;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        /* Layout */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 2rem;
+            flex: 1;
+        }
+
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Sidebar Cards */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            transition: all 0.2s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(197, 160, 89, 0.4);
+        }
+
+        .account-hero {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid rgba(197, 160, 89, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .account-hero::before {
+            content: '';
+            position: absolute;
+            top: -50px;
+            right: -50px;
+            width: 150px;
+            height: 150px;
+            background: radial-gradient(circle, rgba(197, 160, 89, 0.15) 0%, transparent 70%);
+            border-radius: 50%;
+        }
+
+        .account-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .account-balance {
+            font-size: 2.25rem;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.03em;
+        }
+
+        .account-balance small {
+            font-size: 1.25rem;
+            color: var(--cfg-gold-light);
+            font-weight: 500;
+        }
+
+        .account-rib-box {
+            background: rgba(0, 0, 0, 0.35);
+            padding: 0.75rem;
+            border-radius: var(--radius-sm);
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: var(--cfg-gold-light);
+            word-break: break-all;
+            margin-top: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .copy-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 0.25rem;
+        }
+
+        .copy-btn:hover {
+            color: #fff;
+        }
+
+        /* Physical Card Preview */
+        .debit-card {
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            aspect-ratio: 1.586;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.5);
+        }
+
+        .chip {
+            width: 42px;
+            height: 32px;
+            background: linear-gradient(135deg, #d4af37 0%, #aa820a 100%);
+            border-radius: 6px;
+        }
+
+        .card-num {
+            font-family: monospace;
+            font-size: 1.15rem;
+            letter-spacing: 0.15em;
+            color: #ffffff;
+        }
+
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            font-size: 0.8rem;
+        }
+
+        /* Main Content Tabs */
+        .content-area {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .tab-bar {
+            display: flex;
+            gap: 0.5rem;
+            background: var(--bg-secondary);
+            padding: 0.5rem;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border);
+            overflow-x: auto;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 0.75rem 1.25rem;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .tab-btn.active {
+            background: var(--cfg-gold);
+            color: #000;
+        }
+
+        .tab-pane {
+            display: none;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .tab-pane.active {
+            display: flex;
+        }
+
+        /* Form Controls */
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .form-control {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 0.75rem 1rem;
+            color: var(--text-main);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .form-control:focus {
+            border-color: var(--cfg-gold);
+        }
+
+        .btn {
+            background: var(--cfg-gold);
+            color: #000;
+            font-weight: 700;
+            border: none;
+            padding: 0.85rem 1.5rem;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn:hover {
+            background: var(--cfg-gold-light);
+            transform: translateY(-1px);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+        }
+
+        .btn-outline:hover {
+            border-color: var(--cfg-gold);
+            color: var(--cfg-gold);
+            background: transparent;
+        }
+
+        /* Result Panel */
+        .result-box {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 1.25rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #10b981;
+            white-space: pre-wrap;
+            max-height: 350px;
+            overflow-y: auto;
+        }
+
+        /* Grid Cards */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .feature-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .feature-icon {
+            font-size: 1.35rem;
+        }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-unexposed {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .badge-live {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            <div class="brand-badge">CFG 051</div>
+            <div class="brand-title">VextOpenBank <span>Autonomous Suite</span></div>
+        </div>
+        <div class="header-meta">
+            <span class="status-pill"><span class="pulse-dot"></span> Backend Gateway Live</span>
+            <span>Client: <strong>VEXT AI (V0183397)</strong></span>
+            <span>Agency: <strong>CFG Anfa Casablanca</strong></span>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="card account-hero">
+                <div class="account-label">Compte Courant Particulier</div>
+                <div class="account-balance">720,00 <small>MAD</small></div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">Disponible: 720,00 MAD | Épargne: 0,00 MAD</div>
+                <div class="account-rib-box">
+                    <span>051 780 0000001234567890 01</span>
+                    <button class="copy-btn" onclick="navigator.clipboard.writeText('051780000000123456789001')">📋</button>
+                </div>
+            </div>
+
+            <div class="debit-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="chip"></div>
+                    <span style="font-weight: 700; font-size: 1.1rem; color: var(--cfg-gold-light);">CFG BANK</span>
+                </div>
+                <div class="card-num">4152 32•• •••• 7197</div>
+                <div class="card-footer">
+                    <div>
+                        <div style="font-size: 0.65rem; color: var(--text-muted);">TITULAIRE</div>
+                        <div style="font-weight: 600;">VEXT AI</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 0.65rem; color: var(--text-muted);">EXPIRE</div>
+                        <div style="font-weight: 600;">12/28</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h4 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--cfg-gold-light);">⚡ Accès Rapide Automations</h4>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <a href="/api/v1/automation/open-banking/account" target="_blank" class="btn btn-outline" style="text-decoration: none; font-size: 0.8rem; padding: 0.6rem;">
+                        Standard Berlin Group NextGenPSD2
+                    </a>
+                    <a href="/api/v1/automation/export/transactions-csv" target="_blank" class="btn btn-outline" style="text-decoration: none; font-size: 0.8rem; padding: 0.6rem;">
+                        Export Grand-Livre CSV
+                    </a>
+                    <a href="/docs" target="_blank" class="btn btn-outline" style="text-decoration: none; font-size: 0.8rem; padding: 0.6rem;">
+                        Swagger UI Interactive Docs
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="content-area">
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="showTab('tab-envoisms')">📲 EnvoiSMS.ma Top-Up Bridge</button>
+                <button class="tab-btn" onclick="showTab('tab-unexposed')">🚀 Fonctions Non-Visibles UI</button>
+                <button class="tab-btn" onclick="showTab('tab-fatourati')">🧾 Fatourati Factures</button>
+                <button class="tab-btn" onclick="showTab('tab-dotations')">✈️ Dotations Devises</button>
+                <button class="tab-btn" onclick="showTab('tab-cheques')">🖋️ Chèques & CMC7 OCR</button>
+                <button class="tab-btn" onclick="showTab('tab-credits')">📈 Simulateur Crédit</button>
+                <button class="tab-btn" onclick="showTab('tab-rib')">🔢 Validateur RIB BAM</button>
+            </div>
+
+            <!-- Tab 0: EnvoiSMS.ma Automated Bank Bridge -->
+            <div id="tab-envoisms" class="tab-pane active">
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                        <div>
+                            <h3>Pont Virement Bancaire Automatisé EnvoiSMS.ma</h3>
+                            <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem;">
+                                Détection temps réel des virements entrants sur le compte CFG Bank (VEXT AI) et déclenchement automatique du crédit EnvoiSMS sans action manuelle.
+                            </p>
+                        </div>
+                        <span class="status-pill"><span class="pulse-dot"></span> Bridge Actif</span>
+                    </div>
+
+                    <div class="features-grid" style="margin-bottom: 1.5rem;">
+                        <div class="feature-card" style="border-color: rgba(197, 160, 89, 0.4);">
+                            <div class="feature-title">
+                                <span class="feature-icon">🏦</span>
+                                <span>Coordonnées Virement VEXT AI</span>
+                            </div>
+                            <div style="font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.4rem;">
+                                <div><strong>Banque :</strong> CFG Bank (Code 051)</div>
+                                <div><strong>Bénéficiaire :</strong> VEXT AI</div>
+                                <div><strong>RIB :</strong> <code>050 810 0060118339712001 89</code></div>
+                                <div><strong>Type :</strong> Virement Instantané BAM (10 à 60 sec)</div>
+                            </div>
+                        </div>
+
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">🛡️</span>
+                                <span>Règles de Réconciliation Forte</span>
+                            </div>
+                            <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 0.35rem;">
+                                <div>✅ <strong>Montant Exact :</strong> Correspondance stricte au centime près.</div>
+                                <div>✅ <strong>Fenêtre Temporelle :</strong> Validité [-10 min, +120 min].</div>
+                                <div>✅ <strong>Reconnaissance Motif :</strong> Code <code>ENV-XXXXX</code> ou Tél Client.</div>
+                                <div>✅ <strong>Anti-Double Dépense :</strong> Verrouillage atomique du Tx ID.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--cfg-gold-light);">Simulateur de Test End-to-End</h4>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>ID Recharge EnvoiSMS (topup_id)</label>
+                            <input type="text" id="env-topup-id" class="form-control" value="topup_live_78491">
+                        </div>
+                        <div class="form-group">
+                            <label>Référence Unique (Motif Obligatoire)</label>
+                            <input type="text" id="env-ref" class="form-control" value="ENV-78491">
+                        </div>
+                        <div class="form-group">
+                            <label>Montant Recharge (MAD)</label>
+                            <input type="number" id="env-amount" class="form-control" value="380.0">
+                        </div>
+                        <div class="form-group">
+                            <label>Client EnvoiSMS</label>
+                            <input type="text" id="env-client" class="form-control" value="Atlas Logistics Maroc SARL">
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 1.25rem; display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <button class="btn" onclick="checkEnvoiSmsTopup()">1. Vérifier Réception Virement (Poll / Clic Client)</button>
+                        <button class="btn btn-outline" onclick="simulateIncomingTransfer()">2. Simuler Arrivée Virement Client (+380 MAD)</button>
+                    </div>
+
+                    <div style="margin-top: 1.5rem;">
+                        <h4 style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Console de Réconciliation & Signature HMAC:</h4>
+                        <div id="envoisms-result" class="result-box">// Cliquez sur '1. Vérifier Réception' pour tester le statut avant virement...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 1: Unexposed Backend Catalog -->
+            <div id="tab-unexposed" class="tab-pane">
+                <div class="card">
+                    <h3 style="margin-bottom: 0.5rem;">Services & Capacités Cachées Découvertes dans l'App</h3>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
+                        Ces modules sont présents dans le code source Kony et le serveur MobileFabric mais masqués ou inactifs dans l'interface mobile utilisateur standard :
+                    </p>
+
+                    <div class="features-grid">
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">✈️</span>
+                                <span>Dotations Devises v2</span>
+                                <span class="badge badge-unexposed">Masqué UI</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                                Service: <code>CFGEndowLanding</code> / Flag: <code>mob_dotations_new</code>. Gestion temps réel des quotas Office des Changes (Voyage & E-Commerce).
+                            </p>
+                            <button class="btn btn-outline" style="font-size: 0.8rem; padding: 0.5rem;" onclick="testDotationsStatus()">Interroger Quotas</button>
+                        </div>
+
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">🧾</span>
+                                <span>Moteur Fatourati CMI</span>
+                                <span class="badge badge-unexposed">Backend Direct</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                                Services: <code>CFGBillers</code>, <code>CFGActionBillPayment</code>. Paiement direct des factures d'eau, électricité, télécom et vignettes fiscales.
+                            </p>
+                            <button class="btn btn-outline" style="font-size: 0.8rem; padding: 0.5rem;" onclick="showTab('tab-fatourati')">Explorer Factures</button>
+                        </div>
+
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">📱</span>
+                                <span>Switch HPS M-Wallet</span>
+                                <span class="badge badge-unexposed">Dormant UI</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                                Service: <code>CFGWalletCreate</code> / Flag: <code>cfg$mob_wallet</code>. Interopérabilité interbancaire marocaine par numéro GSM et QR Code EMVCo.
+                            </p>
+                            <button class="btn btn-outline" style="font-size: 0.8rem; padding: 0.5rem;" onclick="testWalletStatus()">Vérifier Switch</button>
+                        </div>
+
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">🖋️</span>
+                                <span>Dépôt Chèque CMC7 OCR</span>
+                                <span class="badge badge-unexposed">API Active</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                                Services: <code>CFGChequeDepositThirdParty</code>, <code>CFGSOAPCheckImageService</code>. Reconnaissance optique MICR CMC7 et endossement distant.
+                            </p>
+                            <button class="btn btn-outline" style="font-size: 0.8rem; padding: 0.5rem;" onclick="showTab('tab-cheques')">Simuler Dépôt</button>
+                        </div>
+
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">📜</span>
+                                <span>Signature Électronique</span>
+                                <span class="badge badge-unexposed">Backend Présent</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                                Service: <code>ElectronicSignature</code> / Flag: <code>mes_documenets_a_signer</code>. Signature des conventions et avenants contractuels en ligne.
+                            </p>
+                            <button class="btn btn-outline" style="font-size: 0.8rem; padding: 0.5rem;" onclick="testPendingDocs()">Voir Documents</button>
+                        </div>
+
+                        <div class="feature-card">
+                            <div class="feature-title">
+                                <span class="feature-icon">⏱️</span>
+                                <span>Virements Permanents</span>
+                                <span class="badge badge-live">Intégré</span>
+                            </div>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);">
+                                Périodicités supportées : Hebdomadaire (1w), Mensuel (1m), Trimestriel (3m), Semestriel (6m), Annuel (1y) avec SMS au bénéficiaire.
+                            </p>
+                            <button class="btn btn-outline" style="font-size: 0.8rem; padding: 0.5rem;" onclick="testFrequencies()">Voir Périodicités</button>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 1.5rem;">
+                        <h4 style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Sortie Console Live:</h4>
+                        <div id="unexposed-result" class="result-box">// Cliquez sur un des boutons ci-dessus pour inspecter la réponse du service en temps réel...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Fatourati Bills -->
+            <div id="tab-fatourati" class="tab-pane">
+                <div class="card">
+                    <h3>Recherche et Règlement de Factures (Fatourati)</h3>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
+                        Interrogation directe du portail national des facturiers marocains.
+                    </p>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Facturier Marocain</label>
+                            <select id="bill-biller" class="form-control">
+                                <option value="LYDEC_CASA">Lydec Casablanca (Eau / Électricité)</option>
+                                <option value="REDAL_RABAT">Redal Rabat-Salé</option>
+                                <option value="AMENDIS_TNG">Amendis Tanger</option>
+                                <option value="IAM_TELECOM">Maroc Telecom IAM</option>
+                                <option value="ORANGE_MA">Orange Maroc</option>
+                                <option value="INWI_MA">Inwi</option>
+                                <option value="ADM_JAWAZ">Autoroutes du Maroc (Jawaz)</option>
+                                <option value="DGI_VIGNETTE">DGI Vignette Automobile</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Référence / Contrat / Numéro</label>
+                            <input type="text" id="bill-ref" class="form-control" value="0661234567" placeholder="Ex: Contrat 458921">
+                        </div>
+                    </div>
+                    <div style="margin-top: 1.25rem; display: flex; gap: 1rem;">
+                        <button class="btn" onclick="inquireBill()">🔎 Rechercher Factures Impayées</button>
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <div id="bill-result" class="result-box">// En attente de recherche...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Dotations -->
+            <div id="tab-dotations" class="tab-pane">
+                <div class="card">
+                    <h3>Plafonds & Quotas Devises (Office des Changes)</h3>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
+                        Allocation instantanée depuis le compte courant vers les plafonds de paiement internationaux.
+                    </p>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Type de Dotation</label>
+                            <select id="dot-type" class="form-control">
+                                <option value="touristique">Dotation Touristique (Plafond 100 000 MAD)</option>
+                                <option value="ecommerce">Dotation E-Commerce International (15 000 MAD)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Bénéficiaire</label>
+                            <select id="dot-bene" class="form-control">
+                                <option value="cfg$endowment_type_me">Moi-même (Titulaire)</option>
+                                <option value="cfg$endowment_type_partner">Mon conjoint</option>
+                                <option value="cfg$endowment_type_child">Mon enfant</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Montant à Allouer (MAD)</label>
+                            <input type="number" id="dot-amount" class="form-control" value="5000">
+                        </div>
+                    </div>
+                    <div style="margin-top: 1.25rem;">
+                        <button class="btn" onclick="allocateDotation()">Alimenter Dotation</button>
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <div id="dot-result" class="result-box">// En attente...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Cheques -->
+            <div id="tab-cheques" class="tab-pane">
+                <div class="card">
+                    <h3>Chèques : Commande de Chéquier & Dépôt CMC7</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Action Chèque</label>
+                            <select id="chq-action" class="form-control" onchange="toggleChequeForm()">
+                                <option value="order">Commander un Chéquier (25 / 50 feuilles)</option>
+                                <option value="deposit">Simuler Dépôt de Chèque Mobile (CMC7)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="chq-leaves-grp">
+                            <label>Nombre de Feuilles</label>
+                            <select id="chq-leaves" class="form-control">
+                                <option value="25">25 Feuilles</option>
+                                <option value="50">50 Feuilles</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="chq-stub-grp">
+                            <label>Emplacement du Talon</label>
+                            <select id="chq-stub" class="form-control">
+                                <option value="talon_a_gauche">Talon à gauche</option>
+                                <option value="talon_a_droite">Talon à droite</option>
+                                <option value="talon_en_haut">Talon en haut (Format Portefeuille)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="margin-top: 1.25rem;">
+                        <button class="btn" onclick="submitCheque()">Exécuter Action Chèque</button>
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <div id="chq-result" class="result-box">// En attente...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 5: Credits Simulator -->
+            <div id="tab-credits" class="tab-pane">
+                <div class="card">
+                    <h3>Simulateur de Crédit & Remboursement Anticipé CFG</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Montant du Capital Emprunté (MAD)</label>
+                            <input type="number" id="cred-principal" class="form-control" value="800000">
+                        </div>
+                        <div class="form-group">
+                            <label>Taux Annuel Nominal (%)</label>
+                            <input type="number" step="0.1" id="cred-rate" class="form-control" value="4.5">
+                        </div>
+                        <div class="form-group">
+                            <label>Durée en Mois (ex: 240 = 20 ans)</label>
+                            <input type="number" id="cred-months" class="form-control" value="240">
+                        </div>
+                        <div class="form-group">
+                            <label>Taux Assurance MRH / Décès (%)</label>
+                            <input type="number" step="0.05" id="cred-ins" class="form-control" value="0.35">
+                        </div>
+                    </div>
+                    <div style="margin-top: 1.25rem;">
+                        <button class="btn" onclick="simulateCredit()">Calculer Échéancier Mensuel</button>
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <div id="cred-result" class="result-box">// Saisissez vos paramètres et cliquez sur Calculer...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 6: Modulo 97 RIB Validator -->
+            <div id="tab-rib" class="tab-pane">
+                <div class="card">
+                    <h3>Moteur de Contrôle et Validation RIB Bank Al-Maghrib</h3>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
+                        Vérification mathématique du Relevé d'Identité Bancaire sur 24 chiffres avec la formule réglementaire Modulo 97.
+                    </p>
+                    <div class="form-grid">
+                        <div class="form-group" style="grid-column: 1 / -1;">
+                            <label>Numéro de Compte RIB (24 Chiffres)</label>
+                            <input type="text" id="rib-input" class="form-control" value="051780000000123456789001" style="font-family: monospace; font-size: 1.1rem;">
+                        </div>
+                    </div>
+                    <div style="margin-top: 1.25rem; display: flex; gap: 1rem;">
+                        <button class="btn" onclick="validateRib()">Tester Clé Modulo 97</button>
+                        <button class="btn btn-outline" onclick="loadAccountRib()">Charger Mon Compte Courant</button>
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <div id="rib-result" class="result-box">// En attente...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        async function checkEnvoiSmsTopup() {
+            const out = document.getElementById('envoisms-result');
+            const topupId = document.getElementById('env-topup-id').value;
+            const ref = document.getElementById('env-ref').value;
+            const amount = parseFloat(document.getElementById('env-amount').value);
+            const client = document.getElementById('env-client').value;
+            out.innerText = 'Interrogation du pont de réconciliation CFG Bank pour ' + ref + ' (' + amount + ' MAD)...';
+
+            const res = await fetch('/api/v1/envoisms/check-topup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    topup_id: topupId,
+                    account_id: 'acc_demo_atlas',
+                    amount_mad: amount,
+                    reference: ref,
+                    customer_name: client
+                })
+            });
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function simulateIncomingTransfer() {
+            const out = document.getElementById('envoisms-result');
+            const ref = document.getElementById('env-ref').value;
+            const amount = parseFloat(document.getElementById('env-amount').value);
+            const client = document.getElementById('env-client').value;
+            out.innerText = 'Simulation du virement instantané interbancaire en cours...';
+
+            const res = await fetch('/api/v1/envoisms/simulate-incoming-transfer', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    amount_mad: amount,
+                    sender_name: client,
+                    motif: 'Virement instantane recharge ' + ref
+                })
+            });
+            const data = await res.json();
+            out.innerText = '=== VIREMENT ENTRANT DÉTECTÉ SUR LE COMPTE CFG BANK ===\\n' + JSON.stringify(data, null, 2) + '\\n\\nCliquez maintenant sur [1. Vérifier Réception] pour déclencher la réconciliation automatique et observer la signature cryptographique !';
+        }
+
+        async function testDotationsStatus() {
+            const out = document.getElementById('unexposed-result');
+            out.innerText = 'Interrogation de CFGEndowLanding en cours...';
+            const res = await fetch('/api/v1/features/dotations/status');
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function testWalletStatus() {
+            const out = document.getElementById('unexposed-result');
+            out.innerText = 'Vérification du switch HPS national...';
+            const res = await fetch('/api/v1/features/wallet/status');
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function testPendingDocs() {
+            const out = document.getElementById('unexposed-result');
+            out.innerText = 'Récupération des contrats à signer...';
+            const res = await fetch('/api/v1/features/esignature/pending-documents');
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function testFrequencies() {
+            const out = document.getElementById('unexposed-result');
+            const res = await fetch('/api/v1/features/standing-orders/frequencies');
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function inquireBill() {
+            const out = document.getElementById('bill-result');
+            const biller = document.getElementById('bill-biller').value;
+            const ref = document.getElementById('bill-ref').value;
+            out.innerText = 'Interrogation Fatourati pour ' + biller + '...';
+            const res = await fetch('/api/v1/features/bills/inquire', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({biller_code: biller, subscriber_reference: ref})
+            });
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function allocateDotation() {
+            const out = document.getElementById('dot-result');
+            const type = document.getElementById('dot-type').value;
+            const bene = document.getElementById('dot-bene').value;
+            const amount = parseFloat(document.getElementById('dot-amount').value);
+            out.innerText = 'Transmission de la demande de dotation...';
+            const res = await fetch('/api/v1/features/dotations/allocate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    account_rib: '051780000000123456789001',
+                    dotation_type: type,
+                    beneficiary_code: bene,
+                    amount_mad: amount
+                })
+            });
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function submitCheque() {
+            const out = document.getElementById('chq-result');
+            const leaves = parseInt(document.getElementById('chq-leaves').value);
+            const stub = document.getElementById('chq-stub').value;
+            out.innerText = 'Transmission commande SOAP chéquier...';
+            const res = await fetch('/api/v1/features/cheques/order', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    account_rib: '051780000000123456789001',
+                    number_of_leaves: leaves,
+                    stub_position: stub,
+                    delivery_branch_code: '001'
+                })
+            });
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function simulateCredit() {
+            const out = document.getElementById('cred-result');
+            const p = parseFloat(document.getElementById('cred-principal').value);
+            const r = parseFloat(document.getElementById('cred-rate').value);
+            const m = parseInt(document.getElementById('cred-months').value);
+            const ins = parseFloat(document.getElementById('cred-ins').value);
+            out.innerText = 'Calcul en cours...';
+            const res = await fetch('/api/v1/features/credits/simulate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    capital_amount_mad: p,
+                    annual_rate_percent: r,
+                    duration_months: m,
+                    insurance_rate_percent: ins
+                })
+            });
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        async function validateRib() {
+            const out = document.getElementById('rib-result');
+            const rib = document.getElementById('rib-input').value.replace(/\\s+/g, '');
+            out.innerText = 'Calcul de la clé BAM Modulo 97...';
+            const res = await fetch('/api/v1/accounts/validate-rib?rib=' + rib, {method: 'POST'});
+            const data = await res.json();
+            out.innerText = JSON.stringify(data, null, 2);
+        }
+
+        function loadAccountRib() {
+            document.getElementById('rib-input').value = '051780000000123456789001';
+            validateRib();
+        }
+    </script>
+</body>
+</html>

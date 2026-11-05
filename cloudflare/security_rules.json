@@ -1,0 +1,40 @@
+{
+  "description": "Cloudflare WAF and Security Configuration Rules for VextOpenBank",
+  "waf_custom_rules": [
+    {
+      "name": "Block known malicious bots and scanners",
+      "action": "block",
+      "expression": "(cf.threat_score gt 25) or (cf.client.bot and not http.user_agent contains \"Googlebot\")"
+    },
+    {
+      "name": "Enforce TLS 1.3 / 1.2 minimum",
+      "action": "block",
+      "expression": "ssl.protocol eq \"TLSv1\" or ssl.protocol eq \"TLSv1.1\""
+    },
+    {
+      "name": "Protect sensitive MFA step-up and transfer write endpoints",
+      "action": "challenge",
+      "expression": "(http.request.uri.path contains \"/api/v1/security/mfa/verify\" or http.request.uri.path contains \"/api/v1/transfers/execute\") and (ip.geoip.country ne \"MA\" and ip.geoip.country ne \"FR\")"
+    }
+  ],
+  "rate_limiting_rules": [
+    {
+      "name": "MFA OTP Challenge & Verify Throttle",
+      "action": "block",
+      "period": 60,
+      "requests_per_period": 5,
+      "expression": "http.request.uri.path contains \"/api/v1/security/mfa/\""
+    },
+    {
+      "name": "General API Rate Limit",
+      "action": "challenge",
+      "period": 60,
+      "requests_per_period": 120,
+      "expression": "http.request.uri.path starts_with \"/api/v1/\""
+    }
+  ],
+  "zero_trust_access": {
+    "enabled": true,
+    "description": "Optional Cloudflare Access policy requiring Google / GitHub OAuth for OpenAPI docs /docs and /redoc"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "mobile-security-mcp": {
+      "command": "npx",
+      "args": ["-y", "mobile-security-mcp", "--stdio"],
+      "env": {
+        "ANDROID_HOME": "/opt/homebrew/share/android-commandlinetools",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+        "FALLBACK_PYTHON": "python3.12"
+      },
+      "notes": [
+        "Installed globally via npm install -g mobile-security-mcp",
+        "Provides apk_identify, rasp_identify, apk_scan_secrets, android_api_extractor, frida_spawn, search_strings"
+      ]
+    }
+  },
+  "usage": {
+    "recommended_sequence": [
+      "apk_identify <apk>          -> triage/profile.json (packer, obfuscator, framework)",
+      "rasp_identify <apk>         -> detect enterprise RASP (Zimperium, DexGuard, Promon, Arxan)",
+      "apk_scan_secrets <apk>      -> triage/secret-scan.json",
+      "android_api_extractor <apk> -> contract/interface_contract.json",
+      "frida_spawn <pkg>           -> spawn target with instrumentation hooks"
+    ]
+  }
+}

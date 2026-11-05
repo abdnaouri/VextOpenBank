@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  vext-api:
+    build:
+      context: ..
+      dockerfile: cloudflare/Dockerfile
+    container_name: vext-open-bank-api
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+    networks:
+      - cloudflare_internal
+    # No exposed host ports needed! Cloudflared reaches it via Docker network.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: vext-cloudflared-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - cloudflare_internal
+    depends_on:
+      - vext-api
+
+networks:
+  cloudflare_internal:
+    driver: bridge

@@ -1,0 +1,24 @@
+# ==============================================================================
+# Render.com Infrastructure Blueprint
+# Deploys VextOpenBank on the 100% Free Tier ($0.00/month)
+# ==============================================================================
+
+services:
+  - type: web
+    name: vext-open-bank-api
+    runtime: docker
+    dockerfilePath: ./cloudflare/Dockerfile
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/v1/auth/status
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: HOST
+        value: 0.0.0.0
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PROJECT_NAME
+        value: "VextOpenBank API"
+      - key: VERSION
+        value: "1.0.0"

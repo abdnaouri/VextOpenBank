@@ -1,0 +1,18 @@
+# ==============================================================================
+# Cloudflare Tunnel Configuration (cloudflared)
+# Connects your API securely to Cloudflare Edge without opening any firewall ports
+# ==============================================================================
+
+tunnel: <YOUR-TUNNEL-ID-OR-NAME>
+credentials-file: /etc/cloudflared/<YOUR-TUNNEL-UUID>.json
+
+ingress:
+  # Route public API domain to internal FastAPI service
+  - hostname: api.bank.yourdomain.com
+    service: http://vext-api:8000
+    originRequest:
+      connectTimeout: 10s
+      noTLSVerify: true
+
+  # Catch-all rule (required by cloudflared)
+  - service: http_status:404

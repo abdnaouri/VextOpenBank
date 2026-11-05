@@ -1,0 +1,10 @@
+.venv/
+.frida-src/
+work/
+*.apk
+*.dex
+*.pyc
+__pycache__/
+.env
+.DS_Store
+
