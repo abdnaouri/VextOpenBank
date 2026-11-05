@@ -86,6 +86,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+ORIGIN_SHIELD_SECRET = os.environ.get("ORIGIN_SHIELD_SECRET", "cf_shield_origin_auth_837291048576")
+INTERNAL_API_KEY = os.environ.get("VEXT_INTERNAL_API_KEY", "vext_internal_live_key_9f8e7d6c5b4a")
+
+
+@app.middleware("http")
+async def enforce_internal_security(request, call_next):
+    shield_header = request.headers.get("x-origin-shield")
+    internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization")
+
+    is_trusted = (
+        shield_header == ORIGIN_SHIELD_SECRET
+        or internal_key == INTERNAL_API_KEY
+        or internal_key == f"Bearer {INTERNAL_API_KEY}"
+    )
+
+    if not is_trusted:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Forbidden",
+                "detail": (
+                    "Direct origin access blocked. "
+                    "Access must route through Cloudflare Edge with authorized credentials."
+                ),
+            },
+        )
+
+    return await call_next(request)
+
 # Register Sub-Routers
 app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(accounts_router, prefix=settings.API_PREFIX)

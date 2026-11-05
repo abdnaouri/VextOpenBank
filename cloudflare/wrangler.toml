@@ -10,6 +10,8 @@ account_id = "10d74fab3a9cf06d055a28be30d5e764"
 
 # Environment variables (non-secret)
 [vars]
-BACKEND_ORIGIN = "https://httpbin.org"
+BACKEND_ORIGIN = "https://vext-open-bank.onrender.com"
 MAX_REQUESTS_PER_MINUTE = "60"
+INTERNAL_API_KEY = "vext_internal_live_key_9f8e7d6c5b4a"
+ORIGIN_SHIELD_SECRET = "cf_shield_origin_auth_837291048576"
 
