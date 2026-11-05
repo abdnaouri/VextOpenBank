@@ -6,7 +6,7 @@
 name = "vext-open-bank-edge"
 main = "worker.js"
 compatibility_date = "2024-09-01"
-account_id = "10d74fab3a9cf06d055a28be30d5e764"
+account_id = "4a29cd67d1e297142b33d10bdbdca9d8"
 
 # Environment variables (non-secret)
 [vars]
