@@ -17,18 +17,23 @@ export default {
     const authHeader = request.headers.get("Authorization") || "";
     const internalKeyHeader = request.headers.get("X-Vext-Key") || "";
     const envoismsSecret = request.headers.get("X-EnvoiSMS-Secret") || "";
-    const expectedKey = env.INTERNAL_API_KEY || "vext_internal_live_key_9f8e7d6c5b4a";
-    const expectedEnvoiSecret = env.ENVOISMS_SECRET || "cf_shield_origin_auth_837291048576";
+    const expectedKey = env.INTERNAL_API_KEY;
+    const expectedEnvoiSecret = env.ENVOISMS_SECRET;
 
     // Public endpoints that require zero authentication (e.g. read-only bank instructions)
     const isPublicRoute = url.pathname === "/api/v1/envoisms/instructions";
 
     const isAuthorized =
       isPublicRoute ||
-      internalKeyHeader === expectedKey ||
-      authHeader === `Bearer ${expectedKey}` ||
-      authHeader === expectedKey ||
-      (url.pathname.startsWith("/api/v1/envoisms") && (envoismsSecret === expectedEnvoiSecret || envoismsSecret === expectedKey));
+      (Boolean(expectedKey) && (
+        internalKeyHeader === expectedKey ||
+        authHeader === `Bearer ${expectedKey}` ||
+        authHeader === expectedKey
+      )) ||
+      (url.pathname.startsWith("/api/v1/envoisms") && (
+        (Boolean(expectedEnvoiSecret) && envoismsSecret === expectedEnvoiSecret) ||
+        (Boolean(expectedKey) && envoismsSecret === expectedKey)
+      ));
 
     if (!isAuthorized) {
       if (url.pathname === "/") {
@@ -58,7 +63,9 @@ export default {
     outgoingHeaders.set("X-Forwarded-Proto", "https");
 
     // Cryptographic Origin Shield token so backend only trusts Cloudflare
-    outgoingHeaders.set("X-Origin-Shield", env.ORIGIN_SHIELD_SECRET || "cf_shield_origin_auth_837291048576");
+    if (env.ORIGIN_SHIELD_SECRET) {
+      outgoingHeaders.set("X-Origin-Shield", env.ORIGIN_SHIELD_SECRET);
+    }
 
     const modifiedRequest = new Request(originUrl.toString(), {
       method: request.method,

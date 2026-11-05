@@ -6,9 +6,9 @@ Automated Pytest for EnvoiSMS Bank Bridge Reconciliation
 import pytest
 import uuid
 from fastapi.testclient import TestClient
-from vext_open_bank.main import app
+from vext_open_bank.main import app, ORIGIN_SHIELD_SECRET
 
-client = TestClient(app, headers={"x-origin-shield": "cf_shield_origin_auth_837291048576"})
+client = TestClient(app, headers={"x-origin-shield": ORIGIN_SHIELD_SECRET})
 
 def test_envoisms_instructions():
     res = client.get("/api/v1/envoisms/instructions?reference=ENV-10001&amount_mad=275.0")

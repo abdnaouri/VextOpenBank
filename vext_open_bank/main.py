@@ -94,12 +94,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ORIGIN_SHIELD_SECRET = os.environ.get("ORIGIN_SHIELD_SECRET", "cf_shield_origin_auth_837291048576")
-INTERNAL_API_KEY = os.environ.get("VEXT_INTERNAL_API_KEY", "vext_internal_live_key_9f8e7d6c5b4a")
+import secrets
+import time
+from vext_open_bank.core.exchange_logger import exchange_logger
+
+# Cryptographic Origin Shield & Internal Key sourced dynamically from OS environment
+# If unconfigured, generates secure ephemeral runtime secrets to prevent unauthorized access
+ORIGIN_SHIELD_SECRET = os.environ.get("ORIGIN_SHIELD_SECRET") or secrets.token_urlsafe(32)
+INTERNAL_API_KEY = (
+    os.environ.get("VEXT_INTERNAL_API_KEY")
+    or os.environ.get("INTERNAL_API_KEY")
+    or secrets.token_urlsafe(32)
+)
 
 
 @app.middleware("http")
-async def enforce_internal_security(request, call_next):
+async def enforce_internal_security_and_telemetry(request, call_next):
+    start_time = time.time()
     shield_header = request.headers.get("x-origin-shield")
     internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization")
 
@@ -108,17 +119,39 @@ async def enforce_internal_security(request, call_next):
 
     is_trusted = (
         is_public_endpoint
-        or shield_header == ORIGIN_SHIELD_SECRET
-        or internal_key == INTERNAL_API_KEY
-        or internal_key == f"Bearer {INTERNAL_API_KEY}"
+        or (bool(ORIGIN_SHIELD_SECRET) and shield_header == ORIGIN_SHIELD_SECRET)
+        or (bool(INTERNAL_API_KEY) and (
+            internal_key == INTERNAL_API_KEY or internal_key == f"Bearer {INTERNAL_API_KEY}"
+        ))
     )
 
+    # Safely inspect request body if JSON or form
+    req_body_data = None
+    try:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            raw_body = await request.body()
+            if raw_body:
+                import json
+                req_body_data = json.loads(raw_body.decode("utf-8", errors="replace"))
+        elif "application/x-www-form-urlencoded" in content_type:
+            raw_body = await request.body()
+            if raw_body and len(raw_body) < 10000:
+                from urllib.parse import parse_qs
+                req_body_data = {
+                    k: v[0] if len(v) == 1 else v
+                    for k, v in parse_qs(raw_body.decode("utf-8", errors="replace")).items()
+                }
+    except Exception:
+        req_body_data = None
+
+    response = None
     if not is_trusted:
         # Camouflage decoy: do not reveal any security, origin, or gateway cues
         accept_header = request.headers.get("accept", "")
         if request.url.path == "/" and "text/html" in accept_header:
             from fastapi.responses import HTMLResponse
-            return HTMLResponse(
+            response = HTMLResponse(
                 status_code=200,
                 content="""<!DOCTYPE html>
 <html>
@@ -133,18 +166,102 @@ async def enforce_internal_security(request, call_next):
             )
         elif request.url.path == "/":
             from fastapi.responses import JSONResponse
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=200,
                 content={"status": "idle", "module": "static-asset-dispatcher", "workers": 0}
             )
         else:
             from fastapi.responses import JSONResponse
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=404,
                 content={"detail": "Not Found"}
             )
+    else:
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            duration_ms = (time.time() - start_time) * 1000.0
+            try:
+                exchange_logger.log_exchange(
+                    exchange_type="INCOMING_HTTP_REQUEST",
+                    target=request.url.path,
+                    direction="INBOUND",
+                    status_code=500,
+                    request_data={
+                        "query": dict(request.query_params),
+                        "client": request.client.host if request.client else "unknown",
+                        "body": req_body_data,
+                    },
+                    response_data={"error": str(exc)},
+                    headers=dict(request.headers),
+                    duration_ms=duration_ms,
+                    metadata={"trusted": is_trusted, "method": request.method, "exception": str(exc)},
+                )
+            except Exception:
+                pass
+            raise
 
-    return await call_next(request)
+    # Safely extract response body for JSON payloads so discovery engine can inspect response fields
+    resp_body_data = None
+    if response and hasattr(response, "body_iterator"):
+        try:
+            resp_content_type = response.headers.get("content-type", "")
+            if "application/json" in resp_content_type:
+                chunks = []
+                async for chunk in response.body_iterator:
+                    chunks.append(chunk)
+                body_bytes = b"".join(chunks)
+                try:
+                    import json
+                    resp_body_data = json.loads(body_bytes.decode("utf-8", errors="replace"))
+                except Exception:
+                    resp_body_data = {"raw_text": body_bytes[:500].decode("utf-8", errors="replace")}
+
+                from starlette.responses import Response
+                response = Response(
+                    content=body_bytes,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type=response.media_type,
+                    background=response.background,
+                )
+        except Exception as exc:
+            logger.debug("Failed extracting response body for telemetry: %s", exc)
+
+    duration_ms = (time.time() - start_time) * 1000.0
+
+    # Structured telemetry & exchange logging for all incoming connections
+    try:
+        req_headers = dict(request.headers)
+        query_params = dict(request.query_params)
+        req_payload = {
+            "query": query_params,
+            "client": request.client.host if request.client else "unknown",
+        }
+        if req_body_data is not None:
+            req_payload["body"] = req_body_data
+
+        res_payload = (
+            resp_body_data
+            if resp_body_data is not None
+            else {"status_code": response.status_code if response else 500}
+        )
+
+        exchange_logger.log_exchange(
+            exchange_type="INCOMING_HTTP_REQUEST",
+            target=request.url.path,
+            direction="INBOUND",
+            status_code=response.status_code if response else 500,
+            request_data=req_payload,
+            response_data=res_payload,
+            headers=req_headers,
+            duration_ms=duration_ms,
+            metadata={"trusted": is_trusted, "method": request.method},
+        )
+    except Exception as exc:
+        logger.debug("Incoming HTTP exchange log failed: %s", exc)
+
+    return response
 
 # Register Sub-Routers
 app.include_router(auth_router, prefix=settings.API_PREFIX)

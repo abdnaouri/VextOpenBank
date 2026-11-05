@@ -12,6 +12,8 @@ account_id = "4a29cd67d1e297142b33d10bdbdca9d8"
 [vars]
 BACKEND_ORIGIN = "https://vext-open-bank.onrender.com"
 MAX_REQUESTS_PER_MINUTE = "60"
-INTERNAL_API_KEY = "vext_internal_live_key_9f8e7d6c5b4a"
-ORIGIN_SHIELD_SECRET = "cf_shield_origin_auth_837291048576"
+
+# Note: Sensitive secrets (INTERNAL_API_KEY, ORIGIN_SHIELD_SECRET, ENVOISMS_SECRET)
+# must be provisioned via `wrangler secret put <KEY>` or `.dev.vars` for local dev.
+
 

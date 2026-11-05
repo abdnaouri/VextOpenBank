@@ -155,7 +155,8 @@ VextOpenBank/
 │   │   ├── routes_security.py       # Step-up MFA challenge-verify state machine
 │   │   └── routes_transfers.py      # Domestic bank transfers, payees, and impayés
 │   ├── core/                        # Configuration & persistence foundation
-│   │   └── config.py                # Pydantic Settings, .env auto-loader & stable device profiling
+│   │   ├── config.py                # Pydantic Settings, .env auto-loader & stable device profiling
+│   │   └── exchange_logger.py       # Thread-safe connection exchange & telemetry discovery engine
 │   ├── frontend/                    # Built-in diagnostic & operations dashboard
 │   │   └── dashboard.html           # Single-page operations portal with tabbed views
 │   ├── services/                    # Business logic and external protocol clients
@@ -187,6 +188,7 @@ VextOpenBank/
 | [`main.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/main.py) | Application root, lifespan daemon manager, CORS, Origin-Shield security middleware, router registry. | `app`, `lifespan()`, `enforce_internal_security()`, `serve_dashboard()` | FastAPI, Starlette |
 | [`run_api.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/run_api.py) | CLI bootstrap resolving `PORT` and `HOST` dynamically for Render/Docker. | `main()` | Uvicorn |
 | [`core/config.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/core/config.py) | Environment configuration, zero-dependency `.env` parsing, persistent hardware device profile generation. | `Settings`, `_load_env_file()`, `_get_persistent_device_profile()` | Pydantic, JSON, UUID |
+| [`core/exchange_logger.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/core/exchange_logger.py) | Thread-safe connection exchange logger, schema discovery engine, query/payload sanitization, and JSONL log rotation. | `ExchangeLogger`, `exchange_logger`, `log_exchange()`, `inspect_exchange()` | Pathlib, Regex, Threading, JSON |
 | [`services/mobilefabric.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/services/mobilefabric.py) | Low-level Kony MobileFabric gateway client. Enforces mobile header whitelisting, JWT `exp` parsing, token reuse, human micro-jitter, and 401/429 backoff handling. | `MobileFabricClient`, `invoke_service()`, `login_claims()`, `trigger_mfa_challenge()` | Requests, Base64, JSON |
 | [`services/envoisms_bridge.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/services/envoisms_bridge.py) | High-speed bank reconciliation engine. Manages `cfg_incoming_transfers`, `bank_topup_reconciliations`, and `pending_topup_intents`. Operates background sync daemon with natural human jitter. | `EnvoiSMSBridge`, `reconcile_topup()`, `sync_from_cfg()`, `run_sync_worker()` | SQLite3, HMAC, Hashlib, Asyncio |
 | [`services/airlock.py`](file:///Users/naouri/Downloads/VextOpenBank/vext_open_bank/services/airlock.py) | Async Airlock IAM web portal keep-alive worker. Periodically refreshes `AL_SESS-S` cookie and CSRF tokens to preserve backend sessions. | `AirlockWebClient`, `airlock_keepalive_worker()`, `_keepalive_once()` | HTTPX, BeautifulSoup4 |

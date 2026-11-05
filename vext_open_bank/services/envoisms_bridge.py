@@ -4,16 +4,6 @@ Autonomous Reconciliation Engine connecting CFG Bank (VEXT AI) with EnvoiSMS.ma
 Handles incoming transfer detection, intelligent motif matching, strict deduplication, and HMAC webhook dispatch.
 """
 
-import sqlite3
-import os
-import hmac
-import hashlib
-import json
-import time
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
-import urllib.request
-
 import asyncio
 import hashlib
 import hmac
@@ -21,17 +11,24 @@ import json
 import logging
 import os
 import random
+import secrets
 import sqlite3
 import threading
 import time
-import urllib.request
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+
+from vext_open_bank.core.exchange_logger import exchange_logger
 
 logger = logging.getLogger("EnvoiSMSBridge")
 
 DATABASE_PATH = "/tmp/vext_envoisms_reconciliation.db"
-SHARED_WEBHOOK_SECRET = os.getenv("ENVOISMS_VEXT_SECRET", "")
+# Dynamically sourced HMAC webhook secret; if unset, generate ephemeral runtime secret
+SHARED_WEBHOOK_SECRET = (
+    os.getenv("ENVOISMS_VEXT_SECRET")
+    or os.getenv("ENVOISMS_SECRET")
+    or secrets.token_hex(32)
+)
 ENVOISMS_API_BASE = os.getenv("ENVOISMS_API_BASE", "https://api.envoisms.ma")
 
 
@@ -110,13 +107,24 @@ class EnvoiSMSBridge:
             """, (bank_tx_id, amount_mad, sender_name, sender_rib, motif, val_date, now_str))
             conn.commit()
 
-        return {
+        res = {
             "bank_tx_id": bank_tx_id,
             "amount_mad": amount_mad,
             "sender_name": sender_name,
             "motif": motif,
             "recorded_at": now_str
         }
+
+        exchange_logger.log_exchange(
+            exchange_type="CFG_TRANSFER_INGESTION",
+            target="record_incoming_bank_transfer",
+            direction="INBOUND",
+            status_code=200,
+            request_data={"bank_tx_id": bank_tx_id, "amount_mad": amount_mad, "sender_name": sender_name, "motif": motif},
+            response_data=res,
+        )
+
+        return res
 
     def register_or_update_intent(
         self,
@@ -234,8 +242,24 @@ class EnvoiSMSBridge:
                     skip_async_trigger=True,
                 )
 
+            exchange_logger.log_exchange(
+                exchange_type="ENVOISMS_CFG_SYNC",
+                target="sync_from_cfg",
+                direction="INTERNAL_SYNC",
+                status_code=200,
+                request_data={"account_id": account_id},
+                response_data={"new_transactions_ingested": new_count, "active_intents_evaluated": len(pending)},
+            )
         except Exception as exc:
             logger.warning("CFG background synchronization encountered error: %s", exc)
+            exchange_logger.log_exchange(
+                exchange_type="ENVOISMS_CFG_SYNC",
+                target="sync_from_cfg",
+                direction="INTERNAL_SYNC",
+                status_code=500,
+                request_data={"account_id": account_id},
+                response_data={"error": str(exc)},
+            )
         finally:
             self._sync_lock.release()
 
@@ -453,11 +477,22 @@ class EnvoiSMSBridge:
         signature = self.generate_signature(confirmation_payload, SHARED_WEBHOOK_SECRET)
         confirmation_payload["signature"] = signature
 
-        return True, {
+        result = {
             "status": "CONFIRMED",
             "message": f"Virement bancaire de {amount_mad:,.2f} MAD confirmé avec succès sur CFG Bank !",
             "details": confirmation_payload
         }
+
+        exchange_logger.log_exchange(
+            exchange_type="ENVOISMS_RECONCILIATION_MATCH",
+            target="reconcile_topup",
+            direction="INTERNAL_SYNC",
+            status_code=200,
+            request_data={"topup_id": topup_id, "amount_mad": amount_mad, "reference": reference},
+            response_data={"status": "CONFIRMED", "bank_tx_id": bank_tx_id},
+        )
+
+        return True, result
 
     @staticmethod
     def generate_signature(payload: Dict[str, Any], secret: str) -> str:
