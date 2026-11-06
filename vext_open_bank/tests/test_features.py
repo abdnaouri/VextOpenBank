@@ -97,3 +97,47 @@ def test_mwallet_and_standing_orders():
     freq = client.get("/api/v1/features/standing-orders/frequencies")
     assert freq.status_code == 200
     assert len(freq.json()["frequencies"]) == 5
+
+
+def test_fatourati_bills_underpayment_and_centime_tolerance():
+    # 1. Underpayment: Paying 10.00 MAD on a 248.50 MAD bill -> 400 Bad Request
+    underpay = client.post("/api/v1/features/bills/pay", json={
+        "biller_code": "LYDEC_CASA",
+        "subscriber_reference": "REF_1234",
+        "bill_id": "FAC-001",
+        "amount_mad": 10.0,
+        "account_rib": "051780000000123456789001"
+    })
+    assert underpay.status_code == 400
+    err = underpay.json()["detail"]
+    assert err["error"] == "INCOHERENCE_DE_MONTANT"
+    assert err["expected_total_ttc"] == 248.5
+    assert err["received_amount_mad"] == 10.0
+    assert err["missing_amount_mad"] == 238.5
+    assert err["variance_mad"] == 238.5
+    assert "238.50 MAD" in err["message"]
+
+    # 2. Centime variation within ±0.05 MAD (e.g. 248.53 MAD, variance = +0.03 MAD) -> Accepted (200 OK)
+    centime_ok = client.post("/api/v1/features/bills/pay", json={
+        "biller_code": "LYDEC_CASA",
+        "subscriber_reference": "REF_1234",
+        "bill_id": "FAC-001",
+        "amount_mad": 248.53,
+        "account_rib": "051780000000123456789001"
+    })
+    assert centime_ok.status_code == 200
+    assert centime_ok.json()["status"] == "SETTLED"
+
+    # 3. Overpayment > 0.05 MAD (e.g. 300.00 MAD on 248.50 MAD) -> 400 Bad Request
+    overpay = client.post("/api/v1/features/bills/pay", json={
+        "biller_code": "LYDEC_CASA",
+        "subscriber_reference": "REF_1234",
+        "bill_id": "FAC-001",
+        "amount_mad": 300.0,
+        "account_rib": "051780000000123456789001"
+    })
+    assert overpay.status_code == 400
+    err_over = overpay.json()["detail"]
+    assert err_over["error"] == "INCOHERENCE_DE_MONTANT"
+    assert err_over["overpaid_amount_mad"] == 51.5
+    assert err_over["missing_amount_mad"] == 0.0

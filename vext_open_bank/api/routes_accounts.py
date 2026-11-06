@@ -5,6 +5,7 @@ Account management, balances, RIB operations, and statements.
 
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, List
+from vext_open_bank.core.moroccan_banks import resolve_moroccan_bank
 from vext_open_bank.services.data_store import data_store
 from vext_open_bank.services.mobilefabric import mf_client
 
@@ -59,10 +60,14 @@ def validate_rib(rib: str) -> Dict[str, Any]:
         expected_key = 0
 
     is_valid = (key == expected_key)
+    bank_meta = resolve_moroccan_bank(clean_rib[:3])
     return {
         "rib": clean_rib,
         "is_valid": is_valid,
         "bank_code": clean_rib[:3],
+        "bank_name": bank_meta["name"],
+        "bank_full_name": bank_meta["full_name"],
+        "supports_bam_instant": bank_meta.get("supports_instant", False),
         "branch_code": clean_rib[3:6],
         "account_number": clean_rib[6:22],
         "provided_key": key,

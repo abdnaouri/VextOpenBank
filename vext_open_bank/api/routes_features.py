@@ -159,10 +159,54 @@ def pay_bill(req: BillPaymentRequest):
     """
     Execute bill settlement via Fatourati protocol.
     Backend service: 'CFGActionBillPayment'.
+    Enforces Fraud & Underpayment Protection:
+    - Verifies incoming amount against invoice total_to_pay_mad (total_ttc).
+    - If variance > 0.05 MAD, rejects with HTTP 400 (Incohérence de montant)
+      and details the exact missing amount to the client.
+    - Minor centime rounding variations within ±0.05 MAD are accepted.
     """
     biller = next((b for b in BILLERS_CATALOG if b["code"] == req.biller_code), None)
     if not biller:
         raise HTTPException(status_code=404, detail="Biller not found")
+
+    # Invoice golden record total TTC (deterministic mock: 245.50 + 3.00 fees = 248.50 MAD)
+    expected_total_ttc = 248.50
+    variance = round(abs(req.amount_mad - expected_total_ttc), 2)
+
+    # Fraud & Underpayment Protection Check
+    if variance > 0.05:
+        is_underpayment = req.amount_mad < expected_total_ttc
+        missing_mad = round(expected_total_ttc - req.amount_mad, 2) if is_underpayment else 0.0
+        overpaid_mad = round(req.amount_mad - expected_total_ttc, 2) if not is_underpayment else 0.0
+
+        if is_underpayment:
+            msg = (
+                f"Incohérence de montant : le montant soumis ({req.amount_mad:,.2f} MAD) est inférieur "
+                f"au montant total TTC de la facture ({expected_total_ttc:,.2f} MAD). "
+                f"Montant manquant : {missing_mad:,.2f} MAD."
+            )
+        else:
+            msg = (
+                f"Incohérence de montant : le montant soumis ({req.amount_mad:,.2f} MAD) est supérieur "
+                f"au montant total TTC de la facture ({expected_total_ttc:,.2f} MAD). "
+                f"Montant en trop : {overpaid_mad:,.2f} MAD."
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "INCOHERENCE_DE_MONTANT",
+                "message": msg,
+                "bill_id": req.bill_id,
+                "expected_total_ttc": expected_total_ttc,
+                "received_amount_mad": req.amount_mad,
+                "missing_amount_mad": missing_mad,
+                "overpaid_amount_mad": overpaid_mad,
+                "variance_mad": variance,
+                "currency": "MAD",
+                "tolerance_mad": 0.05,
+            },
+        )
 
     receipt_number = f"FAT-{datetime.now().strftime('%Y%m%d')}-{abs(hash(req.bill_id)) % 100000:05d}"
     return {

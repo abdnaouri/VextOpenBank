@@ -35,6 +35,10 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from vext_open_bank.core.exchange_logger import exchange_logger
+from vext_open_bank.core.moroccan_banks import (
+    resolve_moroccan_bank,
+    matches_reference_fuzzy,
+)
 
 logger = logging.getLogger("EnvoiSMSBridge")
 
@@ -96,7 +100,7 @@ class EnvoiSMSBridge:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
 
-            # Transactions observed on VEXT AI CFG Bank account
+            # Transactions observed on VEXT AI Bank accounts (CFG, Attijari, CIH, BCP)
             c.execute("""
                 CREATE TABLE IF NOT EXISTS cfg_incoming_transfers (
                     bank_tx_id TEXT PRIMARY KEY,
@@ -106,9 +110,19 @@ class EnvoiSMSBridge:
                     motif TEXT,
                     value_date TEXT NOT NULL,
                     recorded_at TEXT NOT NULL,
-                    is_reconciled INTEGER DEFAULT 0
+                    is_reconciled INTEGER DEFAULT 0,
+                    recipient_rib TEXT DEFAULT '050810006011833971200189',
+                    recipient_bank_code TEXT DEFAULT '051'
                 )
             """)
+            try:
+                c.execute("ALTER TABLE cfg_incoming_transfers ADD COLUMN recipient_rib TEXT DEFAULT '050810006011833971200189'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                c.execute("ALTER TABLE cfg_incoming_transfers ADD COLUMN recipient_bank_code TEXT DEFAULT '051'")
+            except sqlite3.OperationalError:
+                pass
 
             # Reconciliation ledger linking bank transaction to tenant topup
             c.execute("""
@@ -333,23 +347,28 @@ class EnvoiSMSBridge:
         sender_name: str,
         motif: str,
         sender_rib: Optional[str] = None,
+        recipient_rib: Optional[str] = "050810006011833971200189",
+        recipient_bank_code: Optional[str] = "051",
         value_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record a newly observed incoming bank transfer on CFG account."""
+        """Record a newly observed incoming bank transfer on any VEXT receiving account (CFG, Attijari, BCP, CIH)."""
         now_str  = datetime.now().isoformat()
         val_date = value_date or now_str
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 INSERT OR IGNORE INTO cfg_incoming_transfers
-                (bank_tx_id, amount_mad, sender_name, sender_rib, motif, value_date, recorded_at, is_reconciled)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-            """, (bank_tx_id, amount_mad, sender_name, sender_rib, motif, val_date, now_str))
+                (bank_tx_id, amount_mad, sender_name, sender_rib, motif, value_date, recorded_at, is_reconciled, recipient_rib, recipient_bank_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            """, (bank_tx_id, amount_mad, sender_name, sender_rib, motif, val_date, now_str, recipient_rib or "050810006011833971200189", recipient_bank_code or "051"))
             conn.commit()
 
         res = {
             "bank_tx_id": bank_tx_id,
             "amount_mad": amount_mad,
             "sender_name": sender_name,
+            "sender_rib": sender_rib,
+            "recipient_rib": recipient_rib,
+            "recipient_bank_code": recipient_bank_code,
             "motif": motif,
             "recorded_at": now_str,
         }
@@ -395,14 +414,14 @@ class EnvoiSMSBridge:
         reference: str,
         customer_name: Optional[str] = None,
         customer_phone: Optional[str] = None,
-        tolerance_pct: float = 0.02,
+        tolerance_mad: float = 0.05,
     ) -> Optional[Dict[str, Any]]:
         """
-        Find an unreconciled CFG transfer matching by amount (±2%) and
-        motif / sender heuristics. Returns the best candidate or None.
+        Find an unreconciled CFG transfer matching by amount within centime tolerance
+        (±0.05 MAD) and motif / sender heuristics. Returns the best candidate or None.
         """
-        low  = amount_mad * (1 - tolerance_pct)
-        high = amount_mad * (1 + tolerance_pct)
+        low  = round(amount_mad - tolerance_mad, 2)
+        high = round(amount_mad + tolerance_mad, 2)
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
@@ -412,19 +431,98 @@ class EnvoiSMSBridge:
                 ORDER BY recorded_at DESC
             """, (low, high)).fetchall()
 
-        ref_upper  = (reference or "").upper()
-        name_upper = (customer_name or "").upper()
+        ref_upper  = (reference or "").strip().upper()
+        name_upper = (customer_name or "").strip().upper()
 
         for row in rows:
-            motif  = (row["motif"] or "").upper()
+            motif  = row["motif"] or ""
             sender = (row["sender_name"] or "").upper()
-            if ref_upper and ref_upper in motif:
+            if ref_upper and matches_reference_fuzzy(motif, ref_upper):
                 return dict(row)
             if name_upper and len(name_upper) >= 3 and name_upper[:6] in sender:
                 return dict(row)
 
-        # Fallback: amount match only
-        return dict(rows[0]) if rows else None
+        return None
+
+    def find_all_transfers_by_reference(self, reference: str) -> List[Dict[str, Any]]:
+        """
+        Find all unreconciled transfers matching the reference motif (exact or fuzzy).
+        Supports multi-wire installment settlement (e.g. BAM daily limit split).
+        """
+        ref_upper = (reference or "").strip().upper()
+        if not ref_upper:
+            return []
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT * FROM cfg_incoming_transfers
+                WHERE is_reconciled = 0
+                ORDER BY recorded_at ASC
+            """).fetchall()
+
+        matched = []
+        for row in rows:
+            motif = row["motif"] or ""
+            if matches_reference_fuzzy(motif, ref_upper):
+                matched.append(dict(row))
+        return matched
+
+    def find_transfer_by_reference(self, reference: str) -> Optional[Dict[str, Any]]:
+        """
+        Find any unreconciled CFG transfer matching the reference motif, regardless of amount.
+        Used to detect underpayment / overpayment variance fraud.
+        """
+        wires = self.find_all_transfers_by_reference(reference)
+        return wires[0] if wires else None
+
+    def get_unmatched_transfers(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Return all unreconciled bank transfers in the suspense account ('Compte d'attente').
+        Allows treasury and finance operations to identify mystery inflows.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT * FROM cfg_incoming_transfers
+                WHERE is_reconciled = 0
+                ORDER BY recorded_at DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def claim_unmatched_transfer(
+        self,
+        bank_tx_id: str,
+        topup_id: str,
+        account_id: str,
+        reference: str,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Manually or rule-based allocate an unreferenced transfer from the suspense account to an intent.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            tx = conn.execute(
+                "SELECT * FROM cfg_incoming_transfers WHERE bank_tx_id = ? AND is_reconciled = 0",
+                (bank_tx_id,),
+            ).fetchone()
+        if not tx:
+            return False, {"error": "TRANSFER_NOT_FOUND_OR_ALREADY_RECONCILED", "bank_tx_id": bank_tx_id}
+
+        # Tag the wire with the reference so the reconciliation matcher binds it
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE cfg_incoming_transfers SET motif = motif || ' ' || ? WHERE bank_tx_id = ?",
+                (reference, bank_tx_id),
+            )
+            conn.commit()
+
+        return self.reconcile_topup(
+            topup_id=topup_id,
+            account_id=account_id,
+            amount_mad=tx["amount_mad"],
+            reference=reference,
+        )
 
     def trigger_async_sync(self) -> None:
         """Non-blocking background dispatch (rate-limited by MIN_SYNC_INTERVAL)."""
@@ -475,13 +573,70 @@ class EnvoiSMSBridge:
                 "reconciled_at": existing["reconciled_at"],
             }
 
-        # --- Match incoming transfer ---
+        # --- Match incoming transfer within centime tolerance (±0.05 MAD) ---
         match = self.find_matching_transfer(
             amount_mad=amount_mad,
             reference=reference,
             customer_name=customer_name,
             customer_phone=customer_phone,
+            tolerance_mad=0.05,
         )
+
+        matched_tx_ids = []
+        if match:
+            matched_tx_ids = [match["bank_tx_id"]]
+        else:
+            # Check multi-wire cumulative installments:
+            # Supports clients splitting a payment across multiple wires (e.g. BAM daily transfer limits)
+            wires = self.find_all_transfers_by_reference(reference)
+            if wires:
+                total_collected = sum(w["amount_mad"] for w in wires)
+                variance = round(abs(total_collected - amount_mad), 2)
+                if variance <= 0.05:
+                    match = wires[0]
+                    matched_tx_ids = [w["bank_tx_id"] for w in wires]
+                else:
+                    is_underpayment = total_collected < amount_mad
+                    missing_mad = round(amount_mad - total_collected, 2) if is_underpayment else 0.0
+                    overpaid_mad = round(total_collected - amount_mad, 2) if not is_underpayment else 0.0
+
+                    if is_underpayment:
+                        msg = (
+                            f"Incohérence de montant : virement(s) reçu(s) totalisant {total_collected:,.2f} MAD "
+                            f"({len(wires)} virement(s)) pour une facture/recharge attendue de {amount_mad:,.2f} MAD TTC. "
+                            f"Montant manquant : {missing_mad:,.2f} MAD."
+                        )
+                    else:
+                        msg = (
+                            f"Incohérence de montant : virement(s) reçu(s) totalisant {total_collected:,.2f} MAD "
+                            f"supérieur au montant attendu de {amount_mad:,.2f} MAD TTC. "
+                            f"Montant en trop : {overpaid_mad:,.2f} MAD."
+                        )
+
+                    exchange_logger.log_exchange(
+                        exchange_type="FRAUD_UNDERPAYMENT_DETECTED",
+                        target="reconcile_topup",
+                        direction="INBOUND",
+                        status_code=400,
+                        request_data={"topup_id": topup_id, "expected_mad": amount_mad, "received_mad": total_collected, "wires_count": len(wires)},
+                        response_data={"error": "INCOHERENCE_DE_MONTANT", "missing_amount_mad": missing_mad},
+                    )
+
+                    return False, {
+                        "status": "REJECTED_UNDERPAYMENT",
+                        "error": "INCOHERENCE_DE_MONTANT",
+                        "message": msg,
+                        "topup_id": topup_id,
+                        "expected_amount_mad": amount_mad,
+                        "received_amount_mad": total_collected,
+                        "missing_amount_mad": missing_mad,
+                        "overpaid_amount_mad": overpaid_mad,
+                        "variance_mad": variance,
+                        "installments_count": len(wires),
+                        "currency": "MAD",
+                        "tolerance_mad": 0.05,
+                    }
+
         if not match:
             self.register_or_update_intent(
                 topup_id=topup_id,
@@ -504,7 +659,7 @@ class EnvoiSMSBridge:
                 "checked_at": datetime.now().isoformat(),
             }
 
-        bank_tx_id = match["bank_tx_id"]
+        bank_tx_id = "+".join(matched_tx_ids) if len(matched_tx_ids) > 1 else match["bank_tx_id"]
         now_str    = datetime.now().isoformat()
         now_ts     = int(time.time())
 
@@ -513,20 +668,29 @@ class EnvoiSMSBridge:
         target_url = TENANT_WEBHOOK_URLS.get(tenant, TENANT_WEBHOOK_URLS["ENV"])
         amount_eur = round(amount_mad / eur_mad_rate, 2)
 
+        sender_rib = match.get("sender_rib")
+        bank_meta  = resolve_moroccan_bank(sender_rib)
+
         confirmation_payload: Dict[str, Any] = {
-            "event":            "bank_transfer.confirmed",
-            "topup_id":         topup_id,
-            "account_id":       account_id,
-            "amount_mad":       amount_mad,
-            "amount_eur":       amount_eur,
-            "bank_tx_id":       bank_tx_id,
-            "bank_name":        "CFG Bank",
-            "beneficiary_name": "VEXT AI",
-            "beneficiary_rib":  "050810006011833971200189",
-            "sender_name":      match.get("sender_name"),
-            "transfer_motif":   match.get("motif"),
-            "tenant":           tenant,
-            "timestamp":        now_str,
+            "event":                 "bank_transfer.confirmed",
+            "topup_id":              topup_id,
+            "account_id":            account_id,
+            "amount_mad":            amount_mad,
+            "amount_eur":            amount_eur,
+            "bank_tx_id":            bank_tx_id,
+            "related_bank_tx_ids":   matched_tx_ids,
+            "installments_count":    len(matched_tx_ids),
+            "bank_name":             "CFG Bank",
+            "beneficiary_name":      "VEXT AI",
+            "beneficiary_rib":       match.get("recipient_rib") or "050810006011833971200189",
+            "sender_name":           match.get("sender_name"),
+            "sender_rib":            sender_rib,
+            "originating_bank":      bank_meta["name"],
+            "originating_bank_code": bank_meta["code"],
+            "transfer_channel":      "BAM Virement Instantané (24/7)" if bank_meta.get("supports_instant") else "BAM Virement Ordinaire (SIMT)",
+            "transfer_motif":        match.get("motif"),
+            "tenant":                tenant,
+            "timestamp":             now_str,
         }
         payload_json    = json.dumps(confirmation_payload, sort_keys=True)
         idempotency_key = f"vext_reconcile_{topup_id}"
@@ -546,10 +710,11 @@ class EnvoiSMSBridge:
                     VALUES (?, ?, ?, ?, ?, 'PENDING')
                 """, (topup_id, account_id, bank_tx_id, amount_mad, now_str))
 
-                c.execute("""
-                    UPDATE cfg_incoming_transfers SET is_reconciled = 1
-                    WHERE bank_tx_id = ?
-                """, (bank_tx_id,))
+                for tx_id in matched_tx_ids:
+                    c.execute("""
+                        UPDATE cfg_incoming_transfers SET is_reconciled = 1
+                        WHERE bank_tx_id = ?
+                    """, (tx_id,))
 
                 c.execute("""
                     UPDATE pending_topup_intents SET status = 'CONFIRMED'
