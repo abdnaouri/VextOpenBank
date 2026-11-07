@@ -28,6 +28,7 @@ from vext_open_bank.api.routes_catalog import router as catalog_router
 from vext_open_bank.api.routes_automation import router as automation_router
 from vext_open_bank.api.routes_features import router as features_router
 from vext_open_bank.api.routes_envoisms import router as envoisms_router
+from vext_open_bank.api.routes_soumit import router as soumit_router
 from vext_open_bank.api.routes_security import router as security_router
 from vext_open_bank.api.routes_transfers import router as transfers_router
 from vext_open_bank.api.routes_comms import router as comms_router
@@ -115,7 +116,10 @@ async def enforce_internal_security_and_telemetry(request, call_next):
     internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization")
 
     # Allow public instructions without exposing backend internals
-    is_public_endpoint = request.url.path == f"{settings.API_PREFIX}/envoisms/instructions"
+    is_public_endpoint = (
+        request.url.path == f"{settings.API_PREFIX}/envoisms/instructions"
+        or request.url.path == f"{settings.API_PREFIX}/soumit/instructions"
+    )
 
     is_trusted = (
         is_public_endpoint
@@ -273,6 +277,7 @@ app.include_router(catalog_router, prefix=settings.API_PREFIX)
 app.include_router(automation_router, prefix=settings.API_PREFIX)
 app.include_router(features_router, prefix=settings.API_PREFIX)
 app.include_router(envoisms_router, prefix=settings.API_PREFIX)
+app.include_router(soumit_router, prefix=settings.API_PREFIX)
 app.include_router(security_router, prefix=settings.API_PREFIX)
 app.include_router(transfers_router, prefix=settings.API_PREFIX)
 app.include_router(comms_router, prefix=settings.API_PREFIX)

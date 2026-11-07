@@ -58,17 +58,22 @@ SHARED_WEBHOOK_SECRET = (
 _ENVOISMS_BASE = os.getenv("ENVOISMS_API_BASE", "https://api.envoisms.ma")
 _MEDIUNIT_BASE  = os.getenv("MEDIUNIT_API_BASE", "")
 _BAC_BASE       = os.getenv("BACENPOCHE_API_BASE", "")
+_SOUMIT_BASE    = os.getenv("SOUMIT_API_BASE", "https://soumit.ma")
 
 TENANT_WEBHOOK_URLS: Dict[str, str] = {
     "ENV": f"{_ENVOISMS_BASE}/internal/vext/bank-transfer/webhook",
     "MED": f"{_MEDIUNIT_BASE}/internal/vext/bank-transfer/webhook" if _MEDIUNIT_BASE else "",
     "BAC": f"{_BAC_BASE}/internal/vext/bank-transfer/webhook"      if _BAC_BASE       else "",
+    "SOU": f"{_SOUMIT_BASE}/api/webhooks/vextopenbank",
+    "BC":  f"{_SOUMIT_BASE}/api/webhooks/vextopenbank",
 }
 
 TENANT_SECRETS: Dict[str, str] = {
     "ENV": os.getenv("ENVOISMS_VEXT_SECRET", SHARED_WEBHOOK_SECRET),
     "MED": os.getenv("MEDIUNIT_VEXT_SECRET", ""),
     "BAC": os.getenv("BAC_VEXT_SECRET", ""),
+    "SOU": os.getenv("SOUMIT_VEXT_SECRET", os.getenv("VEXT_WEBHOOK_SECRET", SHARED_WEBHOOK_SECRET)),
+    "BC":  os.getenv("SOUMIT_VEXT_SECRET", os.getenv("VEXT_WEBHOOK_SECRET", SHARED_WEBHOOK_SECRET)),
 }
 
 MAX_OUTBOX_ATTEMPTS = 10
