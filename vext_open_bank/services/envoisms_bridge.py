@@ -232,6 +232,13 @@ class EnvoiSMSBridge:
 
             conn.commit()
 
+        # Initialize unified invoicing engine tables as well
+        try:
+            from vext_open_bank.db.session import init_db
+            init_db(self.db_path)
+        except Exception as exc:
+            logger.debug("init_db in EnvoiSMSBridge: %s", exc)
+
     # ------------------------------------------------------------------
     # HMAC helpers  (format: t=<unix_ts>,v1=<hex_sha256>)
     # ------------------------------------------------------------------

@@ -29,18 +29,28 @@ from vext_open_bank.api.routes_automation import router as automation_router
 from vext_open_bank.api.routes_features import router as features_router
 from vext_open_bank.api.routes_envoisms import router as envoisms_router
 from vext_open_bank.api.routes_soumit import router as soumit_router
+from vext_open_bank.api.routes_invoices import router as invoices_router
+from vext_open_bank.api.routes_aliases import router as aliases_router
 from vext_open_bank.api.routes_security import router as security_router
 from vext_open_bank.api.routes_transfers import router as transfers_router
 from vext_open_bank.api.routes_comms import router as comms_router
 from vext_open_bank.api.routes_agency import router as agency_router
 from vext_open_bank.services.airlock import airlock_keepalive_worker
 from vext_open_bank.services.envoisms_bridge import envoisms_bridge
+from vext_open_bank.workers.outbox_worker import run_outbox_worker
 
 logger = logging.getLogger("VextOpenBank")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize SQLite database schema
+    try:
+        from vext_open_bank.db.session import init_db
+        init_db()
+    except Exception as exc:
+        logger.warning("DB init in lifespan warning: %s", exc)
+
     # Start background Airlock session persistence worker
     keepalive_task = asyncio.create_task(airlock_keepalive_worker())
     logger.info("Airlock IAM session keep-alive background worker started.")
@@ -49,13 +59,18 @@ async def lifespan(app: FastAPI):
     envoisms_task = asyncio.create_task(envoisms_bridge.run_sync_worker())
     logger.info("EnvoiSMS autonomous bank reconciliation background worker started.")
 
+    # Start autonomous transactional outbox webhook dispatcher worker
+    outbox_task = asyncio.create_task(run_outbox_worker(interval_seconds=15))
+    logger.info("Transactional outbox webhook background worker started.")
+
     try:
         yield
     finally:
         keepalive_task.cancel()
         envoisms_task.cancel()
+        outbox_task.cancel()
         try:
-            await asyncio.gather(keepalive_task, envoisms_task, return_exceptions=True)
+            await asyncio.gather(keepalive_task, envoisms_task, outbox_task, return_exceptions=True)
         except asyncio.CancelledError:
             pass
         logger.info("Background workers gracefully stopped.")
@@ -119,6 +134,7 @@ async def enforce_internal_security_and_telemetry(request, call_next):
     is_public_endpoint = (
         request.url.path == f"{settings.API_PREFIX}/envoisms/instructions"
         or request.url.path == f"{settings.API_PREFIX}/soumit/instructions"
+        or request.url.path == f"{settings.API_PREFIX}/invoices/instructions"
     )
 
     is_trusted = (
@@ -278,6 +294,8 @@ app.include_router(automation_router, prefix=settings.API_PREFIX)
 app.include_router(features_router, prefix=settings.API_PREFIX)
 app.include_router(envoisms_router, prefix=settings.API_PREFIX)
 app.include_router(soumit_router, prefix=settings.API_PREFIX)
+app.include_router(invoices_router, prefix=settings.API_PREFIX)
+app.include_router(aliases_router, prefix=settings.API_PREFIX)
 app.include_router(security_router, prefix=settings.API_PREFIX)
 app.include_router(transfers_router, prefix=settings.API_PREFIX)
 app.include_router(comms_router, prefix=settings.API_PREFIX)
