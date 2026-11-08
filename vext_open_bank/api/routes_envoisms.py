@@ -157,7 +157,10 @@ def claim_unmatched_wire(req: ClaimWireRequest):
 
 
 @router.post("/check-topup")
-def check_and_reconcile_topup(req: TopupCheckRequest):
+def check_and_reconcile_topup(
+    req: TopupCheckRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
     """
     Zero-latency check to determine if the customer's transfer has arrived on CFG Bank.
     Resolves directly from local SQLite database in < 5ms without synchronous calls to CFG.
@@ -165,7 +168,17 @@ def check_and_reconcile_topup(req: TopupCheckRequest):
     If matched within ±0.05 MAD, locks the bank transaction and issues a cryptographically signed confirmation.
     If an underpayment or variance > 0.05 MAD is detected, rejects with HTTP 400 (Incohérence de montant)
     and reports the exact missing amount to the client.
+    Protected by strict Idempotency-Key support for network retries.
     """
+    req_hash = f"{req.topup_id}:{req.amount_mad}:{req.reference}"
+    if idempotency_key:
+        cached = envoisms_bridge.check_idempotency(idempotency_key, "/envoisms/check-topup", req_hash)
+        if cached:
+            status_code, resp_payload = cached
+            if status_code == 400:
+                raise HTTPException(status_code=400, detail=resp_payload)
+            return resp_payload
+
     success, result = envoisms_bridge.reconcile_topup(
         topup_id=req.topup_id,
         account_id=req.account_id,
@@ -174,8 +187,15 @@ def check_and_reconcile_topup(req: TopupCheckRequest):
         customer_name=req.customer_name,
         customer_phone=req.customer_phone
     )
+
     if not success and result.get("status") == "REJECTED_UNDERPAYMENT":
+        if idempotency_key:
+            envoisms_bridge.store_idempotency(idempotency_key, "/envoisms/check-topup", req_hash, 400, result)
         raise HTTPException(status_code=400, detail=result)
+
+    if idempotency_key:
+        envoisms_bridge.store_idempotency(idempotency_key, "/envoisms/check-topup", req_hash, 200, result)
+
     return result
 
 

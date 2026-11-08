@@ -42,7 +42,11 @@ from vext_open_bank.core.moroccan_banks import (
 
 logger = logging.getLogger("EnvoiSMSBridge")
 
-DATABASE_PATH = "/tmp/vext_envoisms_reconciliation.db"
+DATABASE_PATH = os.getenv("VEXT_DB_PATH", "/tmp/vext_envoisms_reconciliation.db")
+
+# Deterministic Tolerance Constants (LFD 5-Year Horizon - Frozen)
+AMOUNT_TOLERANCE_MAD: float = 0.05
+DATE_WINDOW_DAYS: int = 3
 
 # Dynamically sourced HMAC webhook secret; if unset, generate ephemeral runtime secret
 SHARED_WEBHOOK_SECRET = (
@@ -59,6 +63,7 @@ _ENVOISMS_BASE = os.getenv("ENVOISMS_API_BASE", "https://api.envoisms.ma")
 _MEDIUNIT_BASE  = os.getenv("MEDIUNIT_API_BASE", "")
 _BAC_BASE       = os.getenv("BACENPOCHE_API_BASE", "")
 _SOUMIT_BASE    = os.getenv("SOUMIT_API_BASE", "https://soumit.ma")
+_CHARIKAT_BASE  = os.getenv("CHARIKAT_API_BASE", "https://charikat.ma")
 
 TENANT_WEBHOOK_URLS: Dict[str, str] = {
     "ENV": f"{_ENVOISMS_BASE}/internal/vext/bank-transfer/webhook",
@@ -66,6 +71,8 @@ TENANT_WEBHOOK_URLS: Dict[str, str] = {
     "BAC": f"{_BAC_BASE}/internal/vext/bank-transfer/webhook"      if _BAC_BASE       else "",
     "SOU": f"{_SOUMIT_BASE}/api/webhooks/vextopenbank",
     "BC":  f"{_SOUMIT_BASE}/api/webhooks/vextopenbank",
+    "CHK": f"{_CHARIKAT_BASE}/api/webhooks/vextopenbank",
+    "CHARIKAT": f"{_CHARIKAT_BASE}/api/webhooks/vextopenbank",
 }
 
 TENANT_SECRETS: Dict[str, str] = {
@@ -74,6 +81,8 @@ TENANT_SECRETS: Dict[str, str] = {
     "BAC": os.getenv("BAC_VEXT_SECRET", ""),
     "SOU": os.getenv("SOUMIT_VEXT_SECRET", os.getenv("VEXT_WEBHOOK_SECRET", SHARED_WEBHOOK_SECRET)),
     "BC":  os.getenv("SOUMIT_VEXT_SECRET", os.getenv("VEXT_WEBHOOK_SECRET", SHARED_WEBHOOK_SECRET)),
+    "CHK": os.getenv("CHARIKAT_VEXT_SECRET", os.getenv("VEXT_WEBHOOK_SECRET", SHARED_WEBHOOK_SECRET)),
+    "CHARIKAT": os.getenv("CHARIKAT_VEXT_SECRET", os.getenv("VEXT_WEBHOOK_SECRET", SHARED_WEBHOOK_SECRET)),
 }
 
 MAX_OUTBOX_ATTEMPTS = 10
@@ -97,12 +106,20 @@ class EnvoiSMSBridge:
         self._sync_lock = threading.Lock()
         self._init_db()
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Create SQLite connection configured with WAL mode and resilient concurrency pragmas."""
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
+        return conn
+
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             c = conn.cursor()
 
             # Transactions observed on VEXT AI Bank accounts (CFG, Attijari, CIH, BCP)
@@ -154,6 +171,36 @@ class EnvoiSMSBridge:
                     registered_at TEXT NOT NULL,
                     last_checked_at TEXT NOT NULL,
                     status TEXT DEFAULT 'PENDING'
+                )
+            """)
+
+            # ----------------------------------------------------------------
+            # Idempotency Records Store (Request deduplication)
+            # ----------------------------------------------------------------
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS request_idempotency_records (
+                    idempotency_key TEXT PRIMARY KEY,
+                    endpoint TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    status_code INTEGER DEFAULT 200,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            # ----------------------------------------------------------------
+            # Dead-Letter / Reconciliation Exceptions
+            # Stores underpayments, ambiguous matches, and unallocated wires
+            # ----------------------------------------------------------------
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS reconciliation_exceptions (
+                    id TEXT PRIMARY KEY,
+                    intent_id TEXT,
+                    reference TEXT,
+                    amount_mad REAL,
+                    reason TEXT NOT NULL,
+                    details_json TEXT,
+                    created_at TEXT NOT NULL
                 )
             """)
 
@@ -246,7 +293,7 @@ class EnvoiSMSBridge:
         now_ts = int(time.time())
         delivered_count = 0
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT id, tenant, event_type, target_url, payload_json,
@@ -306,7 +353,7 @@ class EnvoiSMSBridge:
         return delivered_count
 
     def _mark_outbox_delivered(self, outbox_id: str) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 UPDATE webhook_outbox
                 SET status = 'DELIVERED', delivered_at = ?, attempts = attempts + 1
@@ -323,7 +370,7 @@ class EnvoiSMSBridge:
         base_delay = min(30 * (2 ** attempts), MAX_BACKOFF_SECONDS)
         jitter     = base_delay * 0.1 * random.uniform(-1, 1)
         next_at    = int(time.time()) + int(base_delay + jitter)
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 UPDATE webhook_outbox
                 SET status = 'RETRYING', attempts = ?, next_attempt_at = ?, last_error = ?
@@ -332,7 +379,7 @@ class EnvoiSMSBridge:
             conn.commit()
 
     def _mark_outbox_dead(self, outbox_id: str, error: str) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 UPDATE webhook_outbox
                 SET status = 'DEAD_LETTER', attempts = attempts + 1, last_error = ?
@@ -359,7 +406,7 @@ class EnvoiSMSBridge:
         """Record a newly observed incoming bank transfer on any VEXT receiving account (CFG, Attijari, BCP, CIH)."""
         now_str  = datetime.now().isoformat()
         val_date = value_date or now_str
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 INSERT OR IGNORE INTO cfg_incoming_transfers
                 (bank_tx_id, amount_mad, sender_name, sender_rib, motif, value_date, recorded_at, is_reconciled, recipient_rib, recipient_bank_code)
@@ -389,6 +436,62 @@ class EnvoiSMSBridge:
 
         return res
 
+    def record_exception(
+        self,
+        reason: str,
+        intent_id: Optional[str] = None,
+        reference: Optional[str] = None,
+        amount_mad: Optional[float] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Record ambiguous matches, underpayments, or orphan transfers to reconciliation_exceptions."""
+        exc_id = f"exc_{uuid.uuid4().hex[:12]}"
+        now_str = datetime.now().isoformat()
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT INTO reconciliation_exceptions
+                        (id, intent_id, reference, amount_mad, reason, details_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (exc_id, intent_id, reference, amount_mad, reason, json.dumps(details or {}), now_str))
+                conn.commit()
+        except Exception as e:
+            logger.warning("Failed to record reconciliation exception: %s", e)
+        return exc_id
+
+    def check_idempotency(self, idempotency_key: str, endpoint: str, request_hash: str) -> Optional[Tuple[int, Dict[str, Any]]]:
+        """Check if request was already processed under this idempotency key."""
+        if not idempotency_key:
+            return None
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT response_json, status_code FROM request_idempotency_records WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        if row:
+            try:
+                return row["status_code"], json.loads(row["response_json"])
+            except Exception:
+                return None
+        return None
+
+    def store_idempotency(self, idempotency_key: str, endpoint: str, request_hash: str, status_code: int, response_data: Dict[str, Any]) -> None:
+        """Store idempotency key record for zero-ops deduplication."""
+        if not idempotency_key:
+            return
+        now_str = datetime.now().isoformat()
+        try:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO request_idempotency_records
+                        (idempotency_key, endpoint, request_hash, response_json, status_code, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (idempotency_key, endpoint, request_hash, json.dumps(response_data), status_code, now_str))
+                conn.commit()
+        except Exception as e:
+            logger.warning("Failed to store idempotency record: %s", e)
+
     def register_or_update_intent(
         self,
         topup_id: str,
@@ -400,7 +503,7 @@ class EnvoiSMSBridge:
     ) -> None:
         """Register or touch an active topup intent in local SQLite cache."""
         now_str = datetime.now().isoformat()
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO pending_topup_intents
                     (topup_id, account_id, amount_mad, reference, customer_name,
@@ -427,7 +530,7 @@ class EnvoiSMSBridge:
         """
         low  = round(amount_mad - tolerance_mad, 2)
         high = round(amount_mad + tolerance_mad, 2)
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT * FROM cfg_incoming_transfers
@@ -457,7 +560,7 @@ class EnvoiSMSBridge:
         ref_upper = (reference or "").strip().upper()
         if not ref_upper:
             return []
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT * FROM cfg_incoming_transfers
@@ -485,7 +588,7 @@ class EnvoiSMSBridge:
         Return all unreconciled bank transfers in the suspense account ('Compte d'attente').
         Allows treasury and finance operations to identify mystery inflows.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT * FROM cfg_incoming_transfers
@@ -505,7 +608,7 @@ class EnvoiSMSBridge:
         """
         Manually or rule-based allocate an unreferenced transfer from the suspense account to an intent.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             tx = conn.execute(
                 "SELECT * FROM cfg_incoming_transfers WHERE bank_tx_id = ? AND is_reconciled = 0",
@@ -515,7 +618,7 @@ class EnvoiSMSBridge:
             return False, {"error": "TRANSFER_NOT_FOUND_OR_ALREADY_RECONCILED", "bank_tx_id": bank_tx_id}
 
         # Tag the wire with the reference so the reconciliation matcher binds it
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 "UPDATE cfg_incoming_transfers SET motif = motif || ' ' || ? WHERE bank_tx_id = ?",
                 (reference, bank_tx_id),
@@ -563,7 +666,7 @@ class EnvoiSMSBridge:
         before the commit nothing is recorded — perfect atomicity.
         """
         # --- Fast path: already reconciled (idempotent) ---
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             existing = conn.execute(
                 "SELECT * FROM bank_topup_reconciliations WHERE topup_id = ?",
@@ -625,6 +728,15 @@ class EnvoiSMSBridge:
                         status_code=400,
                         request_data={"topup_id": topup_id, "expected_mad": amount_mad, "received_mad": total_collected, "wires_count": len(wires)},
                         response_data={"error": "INCOHERENCE_DE_MONTANT", "missing_amount_mad": missing_mad},
+                    )
+
+                    # Record exception to dedicated dead-letter table
+                    self.record_exception(
+                        reason="UNDERPAYMENT_OR_VARIANCE_MISMATCH",
+                        intent_id=topup_id,
+                        reference=reference,
+                        amount_mad=amount_mad,
+                        details={"received": total_collected, "expected": amount_mad, "variance": variance},
                     )
 
                     return False, {
@@ -706,7 +818,7 @@ class EnvoiSMSBridge:
         )
 
         # --- ATOMIC commit: reconciliation + outbox enqueue (single transaction) ---
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             c = conn.cursor()
             try:
                 c.execute("""
@@ -788,7 +900,7 @@ class EnvoiSMSBridge:
 
     def get_active_pending_intents(self) -> List[Dict[str, Any]]:
         """Return all topup intents still in PENDING status."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM pending_topup_intents WHERE status = 'PENDING' ORDER BY registered_at DESC"
@@ -797,7 +909,7 @@ class EnvoiSMSBridge:
 
     def get_sync_status(self) -> Dict[str, Any]:
         """Return operational status for the /sync-status health endpoint."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             pending = conn.execute(
                 "SELECT COUNT(*) as n FROM webhook_outbox WHERE status IN ('PENDING','RETRYING')"

@@ -5,7 +5,7 @@ Powering frictionless, automated bank transfer subscriptions, proforma settlemen
 Treasury Account: CFG Bank 050810006011833971200189 (Beneficiary: VEXT AI)
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import time
@@ -88,13 +88,26 @@ def get_all_receiving_accounts():
 
 
 @router.post("/check-order")
-def check_and_reconcile_soumit_order(req: SoumitOrderCheckRequest):
+def check_and_reconcile_soumit_order(
+    req: SoumitOrderCheckRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
     """
     Zero-latency check to determine if customer's transfer has arrived on CFG Bank.
     Resolves directly from local SQLite database in < 5ms without synchronous calls to CFG.
     If matched within ±0.05 MAD, locks bank transaction, dispatches webhook to https://soumit.ma/api/webhooks/vextopenbank,
     and returns cryptographically signed confirmation.
+    Protected by strict Idempotency-Key support for network retries.
     """
+    req_hash = f"{req.order_id}:{req.amount_mad}:{req.reference}"
+    if idempotency_key:
+        cached = envoisms_bridge.check_idempotency(idempotency_key, "/soumit/check-order", req_hash)
+        if cached:
+            status_code, resp_payload = cached
+            if status_code == 400:
+                raise HTTPException(status_code=400, detail=resp_payload)
+            return resp_payload
+
     success, result = envoisms_bridge.reconcile_topup(
         topup_id=req.order_id,
         account_id=req.account_id,
@@ -104,7 +117,13 @@ def check_and_reconcile_soumit_order(req: SoumitOrderCheckRequest):
         customer_phone=req.customer_phone,
     )
     if not success and result.get("status") == "REJECTED_UNDERPAYMENT":
+        if idempotency_key:
+            envoisms_bridge.store_idempotency(idempotency_key, "/soumit/check-order", req_hash, 400, result)
         raise HTTPException(status_code=400, detail=result)
+
+    if idempotency_key:
+        envoisms_bridge.store_idempotency(idempotency_key, "/soumit/check-order", req_hash, 200, result)
+
     return result
 
 

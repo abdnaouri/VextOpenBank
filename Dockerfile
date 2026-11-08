@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
@@ -13,4 +13,4 @@ COPY . .
 
 EXPOSE 10000
 
-CMD python3 -m uvicorn vext_open_bank.main:app --host 0.0.0.0 --port ${PORT}
+CMD ["python3", "-m", "uvicorn", "vext_open_bank.main:app", "--host", "0.0.0.0", "--port", "10000"]
