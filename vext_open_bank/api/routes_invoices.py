@@ -1,11 +1,15 @@
 import io
 import base64
-import qrcode
 import uuid
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
+
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
 
 from .deps import require_tenant, idem_guard
 from ..core.money import to_centimes, from_centimes
@@ -50,16 +54,17 @@ def get_invoice_instructions(
     # Generate QR Code payload for mobile banking / EPC / transfer scanning
     qr_text = f"RIB:{acc['rib']};BENEFICIARY:{acc['beneficiary_name']};AMOUNT:{amount_mad};REF:{reference}"
     qr_image_data_uri = None
-    try:
-        qr = qrcode.QRCode(box_size=4, border=2)
-        qr.add_data(qr_text)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        qr_image_data_uri = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
-    except Exception:
-        qr_image_data_uri = None
+    if qrcode is not None:
+        try:
+            qr = qrcode.QRCode(box_size=4, border=2)
+            qr.add_data(qr_text)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            qr_image_data_uri = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+        except Exception:
+            qr_image_data_uri = None
 
     return {
         "service": f"Charikat.ma Payments ({tenant_cfg.name})",
