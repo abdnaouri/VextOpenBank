@@ -50,13 +50,13 @@ def apply_transfer(
                 "match_status": dup["match_status"],
             }
 
-        # 2. Look for matching invoice by reference
-        ref_norm = (reference or "").strip().upper()
+        # 2. Look for matching invoice by reference or motif (case-insensitive)
+        ref_norm = (reference or "").strip()
         inv = None
         if ref_norm:
             inv = conn.execute(
-                "SELECT * FROM invoices WHERE reference = ? OR reference = ?",
-                (ref_norm, reference),
+                "SELECT * FROM invoices WHERE reference = ? COLLATE NOCASE OR motif = ? COLLATE NOCASE",
+                (ref_norm, ref_norm),
             ).fetchone()
 
         transfer_id = f"trf_{uuid.uuid4().hex[:12]}"
@@ -78,8 +78,9 @@ def apply_transfer(
             event_id = f"evt_{uuid.uuid4().hex[:12]}"
             conn.execute("""
                 INSERT INTO outbox_events (
-                    id, tenant_id, event_type, payload_json, attempts, next_attempt_at, created_at
-                ) VALUES (?, ?, 'transfer.unmatched', ?, 0, ?, ?)
+                    id, tenant_id, event_type, payload_json, attempts, next_attempt_at, created_at,
+                    event_id, tenant, motif, webhook_url, status, locked_until
+                ) VALUES (?, ?, 'transfer.unmatched', ?, 0, ?, ?, ?, ?, ?, ?, 'PENDING', 0)
             """, (
                 event_id, tenant_id,
                 json.dumps({
@@ -88,6 +89,8 @@ def apply_transfer(
                     "amount_mad": str(from_centimes(amount_centimes)),
                 }),
                 now_ts, now_ts,
+                event_id, tenant_id, reference or "UNMATCHED",
+                "https://charikat.ma/api/webhooks/vextopenbank"
             ))
             return {"result": "UNMATCHED", "bank_txn_id": bank_txn_id}
 
