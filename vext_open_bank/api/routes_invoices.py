@@ -193,6 +193,8 @@ def simulate_incoming_transfer(
         else:
             res["motif"] = effective_ref
         res["bank_tx_id"] = bank_id
+        # Also return operation_ref for treasury tracking
+        res["operation_ref"] = f"CFG-{bank_id}"
         return res
     finally:
         conn.close()

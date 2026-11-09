@@ -22,23 +22,29 @@ def build_public_renderer_router(
 
     @router.get("/p/inv/{motif}/status")
     async def get_public_invoice_status(motif: str):
-        clean_motif = motif.strip().upper()
+        clean_motif = motif.strip()
         with db.read_conn() as conn:
             inv = conn.execute(
-                "SELECT motif, tenant, status, expected_centimes, received_centimes, confirmed_at FROM invoices WHERE motif = ?",
-                (clean_motif,),
+                "SELECT motif, reference, tenant, status, state, expected_centimes, amount_centimes, received_centimes, paid_centimes, confirmed_at FROM invoices WHERE motif = ? COLLATE NOCASE OR reference = ? COLLATE NOCASE",
+                (clean_motif, clean_motif),
             ).fetchone()
             ledger = conn.execute(
-                "SELECT operation_ref, bank_tx_id, date_operation FROM treasury_ledger WHERE motif = ? ORDER BY entry_seq DESC LIMIT 1",
+                "SELECT operation_ref, bank_tx_id, date_operation FROM treasury_ledger WHERE motif = ? COLLATE NOCASE ORDER BY entry_seq DESC LIMIT 1",
                 (clean_motif,),
             ).fetchone()
         if not inv:
             raise HTTPException(status_code=404, detail="Facture introuvable.")
+        
+        expected_c = inv["expected_centimes"] or inv["amount_centimes"] or 0
+        received_c = inv["received_centimes"] or inv["paid_centimes"] or 0
+        status_str = inv["status"] or inv["state"] or "AWAITING_TRANSFER"
+        display_motif = inv["motif"] or inv["reference"] or clean_motif
+
         return {
-            "motif": inv["motif"],
-            "status": inv["status"],
-            "expected_mad": centimes_to_mad_str(inv["expected_centimes"]),
-            "received_mad": centimes_to_mad_str(inv["received_centimes"]),
+            "motif": display_motif,
+            "status": status_str,
+            "expected_mad": centimes_to_mad_str(expected_c),
+            "received_mad": centimes_to_mad_str(received_c),
             "confirmed_at": inv["confirmed_at"],
             "operation_ref": ledger["operation_ref"] if ledger else None,
             "bank_tx_id": ledger["bank_tx_id"] if ledger else None,
@@ -94,17 +100,25 @@ def build_public_renderer_router(
 
     @router.get("/p/inv/{motif}", response_class=HTMLResponse)
     async def render_public_invoice_sheet(motif: str):
-        clean_motif = motif.strip().upper()
+        clean_motif = motif.strip()
         with db.read_conn() as conn:
-            inv = conn.execute("SELECT * FROM invoices WHERE motif = ?", (clean_motif,)).fetchone()
+            inv = conn.execute(
+                "SELECT * FROM invoices WHERE motif = ? COLLATE NOCASE OR reference = ? COLLATE NOCASE",
+                (clean_motif, clean_motif),
+            ).fetchone()
         if not inv:
             raise HTTPException(status_code=404, detail="Ordre de virement introuvable.")
 
-        amount_mad = centimes_to_mad_str(inv["expected_centimes"])
-        qr_uri = generate_qr_data_uri(rib_clean, beneficiary, inv["expected_centimes"], clean_motif)
-        safe_motif = html.escape(clean_motif)
-        safe_tenant = html.escape(inv["tenant"].upper())
-        safe_status = html.escape(inv["status"])
+        expected_c = inv["expected_centimes"] or inv["amount_centimes"] or 0
+        amount_mad = centimes_to_mad_str(expected_c)
+        display_motif = inv["motif"] or inv["reference"] or clean_motif
+        tenant_str = inv["tenant"] or inv["tenant_id"] or "CHARIKAT"
+        status_str = inv["status"] or inv["state"] or "AWAITING_TRANSFER"
+
+        qr_uri = generate_qr_data_uri(rib_clean, beneficiary, expected_c, display_motif)
+        safe_motif = html.escape(display_motif)
+        safe_tenant = html.escape(str(tenant_str).upper())
+        safe_status = html.escape(str(status_str))
 
         return f"""<!DOCTYPE html>
 <html lang="fr">

@@ -156,9 +156,24 @@ def apply_transfer(
         # 4. Atomic ledger updates + Audit Log + Outbox Event
         conn.execute("""
             UPDATE invoices
-            SET paid_centimes = ?, state = ?, version = version + 1, updated_at = ?
+            SET paid_centimes = ?,
+                received_centimes = ?,
+                state = ?,
+                status = ?,
+                version = version + 1,
+                updated_at = ?,
+                confirmed_at = CASE WHEN ? = 'CONFIRMED' THEN ? ELSE confirmed_at END
             WHERE id = ?
-        """, (new_paid_centimes, nxt_state.value, now_str, inv["id"]))
+        """, (
+            new_paid_centimes,
+            new_paid_centimes,
+            nxt_state.value,
+            nxt_state.value,
+            now_str,
+            nxt_state.value,
+            now_ts,
+            inv["id"]
+        ))
 
         conn.execute("""
             INSERT INTO transfers (
