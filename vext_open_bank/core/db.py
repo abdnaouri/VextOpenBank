@@ -253,13 +253,45 @@ class Database:
             # 4. idempotency_keys table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS idempotency_keys (
-                    idem_key TEXT PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    idem_key TEXT,
                     request_hash TEXT NOT NULL,
-                    status_code INTEGER NOT NULL,
+                    status_code INTEGER DEFAULT 200,
+                    response_status INTEGER DEFAULT 200,
                     response_json TEXT NOT NULL,
-                    expires_at INTEGER NOT NULL
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (key, tenant_id, endpoint)
                 );
             """)
+            idem_cols = {row["name"] for row in conn.execute("PRAGMA table_info(idempotency_keys)").fetchall()}
+            if idem_cols:
+                if "key" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN key TEXT;")
+                if "tenant_id" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN tenant_id TEXT;")
+                if "endpoint" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN endpoint TEXT;")
+                if "idem_key" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN idem_key TEXT;")
+                if "status_code" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN status_code INTEGER DEFAULT 200;")
+                if "response_status" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN response_status INTEGER DEFAULT 200;")
+                if "created_at" not in idem_cols:
+                    conn.execute("ALTER TABLE idempotency_keys ADD COLUMN created_at TEXT NOT NULL DEFAULT '';")
+                conn.execute("""
+                    UPDATE idempotency_keys
+                    SET key = COALESCE(key, idem_key),
+                        idem_key = COALESCE(idem_key, key),
+                        tenant_id = COALESCE(tenant_id, 'default'),
+                        endpoint = COALESCE(endpoint, '/api/v1/invoices/check'),
+                        response_status = COALESCE(response_status, status_code, 200),
+                        status_code = COALESCE(status_code, response_status, 200)
+                    WHERE key IS NULL OR idem_key IS NULL;
+                """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_idem_expires ON idempotency_keys(expires_at);")
 
             # 5. treasury_ledger table
