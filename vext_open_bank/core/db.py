@@ -110,7 +110,7 @@ class Database:
                 );
             """)
 
-            # Verify and migrate invoices table columns if legacy exists
+            # Verify and migrate invoices table columns if legacy exists or if clean DB exists
             inv_cols = {row["name"] for row in conn.execute("PRAGMA table_info(invoices)").fetchall()}
             if inv_cols:
                 # Add 5-year columns if missing
@@ -133,18 +133,51 @@ class Database:
                 if "confirmed_at" not in inv_cols:
                     conn.execute("ALTER TABLE invoices ADD COLUMN confirmed_at INTEGER;")
                 
-                # If this was a legacy schema containing 'reference', sync the columns
-                if "reference" in inv_cols:
-                    conn.execute("""
-                        UPDATE invoices
-                        SET motif = COALESCE(motif, reference),
-                            tenant = COALESCE(tenant, tenant_id),
-                            customer_ref = COALESCE(customer_ref, client_invoice_id, customer_name),
-                            expected_centimes = COALESCE(expected_centimes, amount_centimes),
-                            received_centimes = COALESCE(received_centimes, paid_centimes, 0),
-                            status = COALESCE(status, state, 'AWAITING_TRANSFER')
-                        WHERE motif IS NULL OR status IS NULL;
-                    """)
+                # Add legacy columns if missing (so legacy service callers find their expected schema)
+                if "id" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN id TEXT;")
+                if "tenant_id" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN tenant_id TEXT;")
+                if "client_invoice_id" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN client_invoice_id TEXT;")
+                if "reference" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN reference TEXT;")
+                if "customer_name" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN customer_name TEXT;")
+                if "amount_centimes" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN amount_centimes INTEGER DEFAULT 0;")
+                if "paid_centimes" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN paid_centimes INTEGER DEFAULT 0;")
+                if "currency" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN currency TEXT DEFAULT 'MAD';")
+                if "state" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN state TEXT DEFAULT 'AWAITING_TRANSFER';")
+                if "receiving_account_id" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN receiving_account_id TEXT DEFAULT 'cfg_main';")
+                if "instructions_json" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN instructions_json TEXT;")
+                if "version" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN version INTEGER DEFAULT 0;")
+
+                # Cross-synchronize legacy and 5-year columns
+                conn.execute("""
+                    UPDATE invoices
+                    SET motif = COALESCE(motif, reference),
+                        reference = COALESCE(reference, motif),
+                        tenant = COALESCE(tenant, tenant_id),
+                        tenant_id = COALESCE(tenant_id, tenant),
+                        customer_ref = COALESCE(customer_ref, client_invoice_id, customer_name),
+                        client_invoice_id = COALESCE(client_invoice_id, customer_ref, motif),
+                        customer_name = COALESCE(customer_name, customer_ref),
+                        expected_centimes = COALESCE(expected_centimes, amount_centimes),
+                        amount_centimes = COALESCE(amount_centimes, expected_centimes),
+                        received_centimes = COALESCE(received_centimes, paid_centimes, 0),
+                        paid_centimes = COALESCE(paid_centimes, received_centimes, 0),
+                        status = COALESCE(status, state, 'AWAITING_TRANSFER'),
+                        state = COALESCE(state, status, 'AWAITING_TRANSFER'),
+                        id = COALESCE(id, 'inv_' || motif)
+                    WHERE motif IS NOT NULL OR reference IS NOT NULL;
+                """)
                 conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_motif ON invoices(motif);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status, created_at);")
 
