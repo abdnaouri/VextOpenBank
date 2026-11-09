@@ -186,6 +186,23 @@ def simulate_incoming_transfer(
             tolerance_centimes=auth.underpayment_tolerance_centimes,
             raw={"simulated": True, "auth_tenant": auth.id, "motif": effective_ref},
         )
+        # Also record in double-entry treasury_ledger if matched/confirmed
+        try:
+            from vext_open_bank.core.ledger import record_treasury_credit_in_tx
+            record_treasury_credit_in_tx(
+                conn,
+                bank_tx_id=bank_id,
+                motif=effective_ref,
+                tenant=auth.id,
+                raw_label=f"VIR INST BAM {effective_ref}",
+                sender_name=body.sender_name or "SIMULATED SENDER",
+                sender_rib=body.sender_rib or "051780000000000000000050",
+                amount_centimes=to_centimes(body.amount_mad),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
         # Add canonical motif for consistency
         parsed = extract_canonical_motif(effective_ref)
         if parsed:
