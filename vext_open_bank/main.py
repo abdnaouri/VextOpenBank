@@ -112,6 +112,7 @@ app.add_middleware(
 
 import secrets
 import time
+import hashlib
 from vext_open_bank.core.exchange_logger import exchange_logger
 
 # Cryptographic Origin Shield & Internal Key sourced dynamically from OS environment
