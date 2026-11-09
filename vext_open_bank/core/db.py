@@ -220,6 +220,7 @@ class Database:
             """)
             outbox_cols = {row["name"] for row in conn.execute("PRAGMA table_info(outbox_events)").fetchall()}
             if outbox_cols:
+                # Add 5-year columns if missing
                 if "event_id" not in outbox_cols:
                     conn.execute("ALTER TABLE outbox_events ADD COLUMN event_id TEXT;")
                 if "tenant" not in outbox_cols:
@@ -232,15 +233,24 @@ class Database:
                     conn.execute("ALTER TABLE outbox_events ADD COLUMN status TEXT DEFAULT 'PENDING';")
                 if "locked_until" not in outbox_cols:
                     conn.execute("ALTER TABLE outbox_events ADD COLUMN locked_until INTEGER NOT NULL DEFAULT 0;")
+
+                # Add legacy columns if missing (so legacy callers like reconciliation.py succeed)
+                if "id" not in outbox_cols:
+                    conn.execute("ALTER TABLE outbox_events ADD COLUMN id TEXT;")
+                if "tenant_id" not in outbox_cols:
+                    conn.execute("ALTER TABLE outbox_events ADD COLUMN tenant_id TEXT;")
+                if "event_type" not in outbox_cols:
+                    conn.execute("ALTER TABLE outbox_events ADD COLUMN event_type TEXT DEFAULT 'invoice.confirmed';")
                 
                 # Sync legacy rows if needed
-                if "id" in outbox_cols:
-                    conn.execute("""
-                        UPDATE outbox_events
-                        SET event_id = COALESCE(event_id, id),
-                            tenant = COALESCE(tenant, tenant_id)
-                        WHERE event_id IS NULL;
-                    """)
+                conn.execute("""
+                    UPDATE outbox_events
+                    SET event_id = COALESCE(event_id, id),
+                        id = COALESCE(id, event_id),
+                        tenant = COALESCE(tenant, tenant_id),
+                        tenant_id = COALESCE(tenant_id, tenant)
+                    WHERE event_id IS NULL OR id IS NULL OR tenant IS NULL OR tenant_id IS NULL;
+                """)
 
             outbox_cols_updated = {row["name"] for row in conn.execute("PRAGMA table_info(outbox_events)").fetchall()}
             if "status" in outbox_cols_updated and "locked_until" in outbox_cols_updated:

@@ -199,13 +199,17 @@ def apply_transfer(
             "timestamp": now_str,
         }
 
+        # Dual insert to satisfy both legacy and 5-year outbox schemas
         conn.execute("""
             INSERT INTO outbox_events (
-                id, tenant_id, event_type, payload_json, attempts, next_attempt_at, created_at
-            ) VALUES (?, ?, ?, ?, 0, ?, ?)
+                id, tenant_id, event_type, payload_json, attempts, next_attempt_at, created_at,
+                event_id, tenant, motif, webhook_url, status, locked_until
+            ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 'PENDING', 0)
         """, (
             event_id, tenant_id, f"invoice.{nxt_state.value.lower()}",
             json.dumps(payload), now_ts, now_ts,
+            event_id, tenant_id, inv["reference"],
+            "https://charikat.ma/api/webhooks/vextopenbank"
         ))
 
         return {
