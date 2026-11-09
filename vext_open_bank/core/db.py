@@ -253,17 +253,16 @@ class Database:
             # 4. idempotency_keys table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS idempotency_keys (
-                    key TEXT NOT NULL,
-                    tenant_id TEXT NOT NULL,
-                    endpoint TEXT NOT NULL,
+                    key TEXT DEFAULT '',
+                    tenant_id TEXT DEFAULT '',
+                    endpoint TEXT DEFAULT '',
                     idem_key TEXT,
                     request_hash TEXT NOT NULL,
                     status_code INTEGER DEFAULT 200,
                     response_status INTEGER DEFAULT 200,
                     response_json TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT '',
-                    PRIMARY KEY (key, tenant_id, endpoint)
+                    created_at TEXT NOT NULL DEFAULT ''
                 );
             """)
             idem_cols = {row["name"] for row in conn.execute("PRAGMA table_info(idempotency_keys)").fetchall()}

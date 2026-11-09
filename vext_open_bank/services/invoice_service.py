@@ -56,13 +56,21 @@ def upsert_and_check(
                 "rib": "050810006011833971200189",
                 "bank": "CFG Bank",
             }
+            # Dual-populate legacy columns and 5-year core columns
             conn.execute("""
                 INSERT INTO invoices (
                     id, tenant_id, client_invoice_id, reference, customer_name,
                     amount_centimes, subtotal_centimes, tax_centimes, paid_centimes,
                     currency, state, receiving_account_id, instructions_json,
-                    version, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 'MAD', ?, ?, ?, 0, ?, ?)
+                    version, created_at, updated_at,
+                    motif, tenant, customer_ref, expected_centimes, received_centimes, status, webhook_url
+                ) VALUES (
+                    ?, ?, ?, ?, ?,
+                    ?, 0, 0, 0,
+                    'MAD', ?, ?, ?,
+                    0, ?, ?,
+                    ?, ?, ?, ?, 0, ?, ?
+                )
             """, (
                 inv_id, tenant.id, client_invoice_id, reference,
                 customer_name or "N/A", amount_c,
@@ -70,6 +78,9 @@ def upsert_and_check(
                 tenant.receiving_account_id or "cfg_main",
                 json.dumps(instructions_data),
                 now_str, now_str,
+                reference, tenant.id, customer_name or "N/A", amount_c,
+                InvoiceState.AWAITING_TRANSFER.value,
+                tenant.webhook_url or "https://charikat.ma/api/webhooks/vextopenbank"
             ))
             row = conn.execute(
                 "SELECT * FROM invoices WHERE id = ?", (inv_id,)
