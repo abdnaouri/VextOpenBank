@@ -137,12 +137,26 @@ async def enforce_internal_security_and_telemetry(request, call_next):
         or request.url.path == f"{settings.API_PREFIX}/invoices/instructions"
     )
 
+    # Check tenant API keys
+    token_candidate = None
+    if internal_key and internal_key.startswith("Bearer "):
+        token_candidate = internal_key[7:].strip()
+    elif internal_key:
+        token_candidate = internal_key.strip()
+
+    is_tenant_key = False
+    if token_candidate:
+        cand_hash = hashlib.sha256(token_candidate.encode()).hexdigest()
+        from vext_open_bank.core.tenants import SEED_TENANTS
+        is_tenant_key = any(t.api_key_hash == cand_hash for t in SEED_TENANTS.values())
+
     is_trusted = (
         is_public_endpoint
         or (bool(ORIGIN_SHIELD_SECRET) and shield_header == ORIGIN_SHIELD_SECRET)
         or (bool(INTERNAL_API_KEY) and (
             internal_key == INTERNAL_API_KEY or internal_key == f"Bearer {INTERNAL_API_KEY}"
         ))
+        or is_tenant_key
     )
 
     # Safely inspect request body if JSON or form
