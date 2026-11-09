@@ -35,11 +35,36 @@ from vext_open_bank.api.routes_security import router as security_router
 from vext_open_bank.api.routes_transfers import router as transfers_router
 from vext_open_bank.api.routes_comms import router as comms_router
 from vext_open_bank.api.routes_agency import router as agency_router
+from vext_open_bank.routes_treasury import build_treasury_router
+from vext_open_bank.routes_public import build_public_renderer_router
+from vext_open_bank.core.db import Database
+from vext_open_bank.core.rib import validate_moroccan_rib
+from vext_open_bank.core.outbox import OutboxWorker
+from vext_open_bank.db.session import get_database, DATABASE_PATH
 from vext_open_bank.services.airlock import airlock_keepalive_worker
 from vext_open_bank.services.envoisms_bridge import envoisms_bridge
 from vext_open_bank.workers.outbox_worker import run_outbox_worker
 
 logger = logging.getLogger("VextOpenBank")
+
+# Immutable Treasury Constants
+CFG_RIB_RAW = os.getenv("VEXT_TREASURY_RIB", "050 810 0060118339712001 89")
+CFG_RIB_CLEAN = validate_moroccan_rib(CFG_RIB_RAW)
+BENEFICIARY_NAME = os.getenv("VEXT_BENEFICIARY_NAME", "VEXT AI")
+CLIENT_CODE = "183397"
+USER_ID = "V0183397"
+
+# Unified Zero-Maintenance Outbox Worker
+default_webhook_secret = os.getenv("VEXT_WEBHOOK_SECRET", "vext_unified_secret_key_2026")
+unified_worker = OutboxWorker(
+    db=get_database(),
+    tenant_secrets={
+        "envoisms": os.getenv("ENVOISMS_VEXT_SECRET", os.getenv("ENVOISMS_SECRET", default_webhook_secret)),
+        "soumit": os.getenv("SOUMIT_VEXT_SECRET", default_webhook_secret),
+        "charikat": os.getenv("CHARIKAT_VEXT_SECRET", default_webhook_secret),
+    },
+    default_secret=default_webhook_secret,
+)
 
 
 @asynccontextmanager
@@ -59,18 +84,20 @@ async def lifespan(app: FastAPI):
     envoisms_task = asyncio.create_task(envoisms_bridge.run_sync_worker())
     logger.info("EnvoiSMS autonomous bank reconciliation background worker started.")
 
-    # Start autonomous transactional outbox webhook dispatcher worker
+    # Start autonomous transactional outbox webhook dispatcher worker (legacy & unified)
     outbox_task = asyncio.create_task(run_outbox_worker(interval_seconds=15))
-    logger.info("Transactional outbox webhook background worker started.")
+    unified_outbox_task = asyncio.create_task(unified_worker.run_forever())
+    logger.info("Transactional outbox webhook background workers started.")
 
     try:
         yield
     finally:
+        unified_worker.stop()
         keepalive_task.cancel()
         envoisms_task.cancel()
         outbox_task.cancel()
         try:
-            await asyncio.gather(keepalive_task, envoisms_task, outbox_task, return_exceptions=True)
+            await asyncio.gather(keepalive_task, envoisms_task, outbox_task, unified_outbox_task, return_exceptions=True)
         except asyncio.CancelledError:
             pass
         logger.info("Background workers gracefully stopped.")
@@ -113,6 +140,7 @@ app.add_middleware(
 import secrets
 import time
 import hashlib
+import hmac
 from vext_open_bank.core.exchange_logger import exchange_logger
 
 # Cryptographic Origin Shield & Internal Key sourced dynamically from OS environment
@@ -128,14 +156,15 @@ INTERNAL_API_KEY = (
 @app.middleware("http")
 async def enforce_internal_security_and_telemetry(request, call_next):
     start_time = time.time()
-    shield_header = request.headers.get("x-origin-shield")
-    internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization")
+    shield_header = request.headers.get("x-origin-shield") or request.headers.get("X-Vext-Edge-Secret", "")
+    internal_key = request.headers.get("x-vext-key") or request.headers.get("authorization", "")
 
-    # Allow public instructions without exposing backend internals
+    # Allow public instructions, payment sheets, and avis receipts without exposing backend internals
     is_public_endpoint = (
         request.url.path == f"{settings.API_PREFIX}/envoisms/instructions"
         or request.url.path == f"{settings.API_PREFIX}/soumit/instructions"
         or request.url.path == f"{settings.API_PREFIX}/invoices/instructions"
+        or request.url.path.startswith("/p/")
     )
 
     # Check tenant API keys
@@ -151,12 +180,16 @@ async def enforce_internal_security_and_telemetry(request, call_next):
         from vext_open_bank.core.tenants import SEED_TENANTS
         is_tenant_key = any(t.api_key_hash == cand_hash for t in SEED_TENANTS.values())
 
+    # Constant-time comparison for token and origin shield
+    origin_matches = bool(ORIGIN_SHIELD_SECRET) and bool(shield_header) and hmac.compare_digest(shield_header, ORIGIN_SHIELD_SECRET)
+    internal_matches = False
+    if bool(INTERNAL_API_KEY) and bool(token_candidate):
+        internal_matches = hmac.compare_digest(token_candidate, INTERNAL_API_KEY)
+
     is_trusted = (
         is_public_endpoint
-        or (bool(ORIGIN_SHIELD_SECRET) and shield_header == ORIGIN_SHIELD_SECRET)
-        or (bool(INTERNAL_API_KEY) and (
-            internal_key == INTERNAL_API_KEY or internal_key == f"Bearer {INTERNAL_API_KEY}"
-        ))
+        or origin_matches
+        or internal_matches
         or is_tenant_key
     )
 
@@ -315,6 +348,29 @@ app.include_router(security_router, prefix=settings.API_PREFIX)
 app.include_router(transfers_router, prefix=settings.API_PREFIX)
 app.include_router(comms_router, prefix=settings.API_PREFIX)
 app.include_router(agency_router, prefix=settings.API_PREFIX)
+
+# Corporate Treasury & Relevé Bancaire Engine
+treasury_router = build_treasury_router(
+    get_database(),
+    rib_formatted=CFG_RIB_RAW,
+    rib_clean=CFG_RIB_CLEAN,
+    beneficiary=BENEFICIARY_NAME,
+    client_code=CLIENT_CODE,
+    user_id=USER_ID,
+)
+app.include_router(treasury_router, prefix=settings.API_PREFIX)
+
+# Public French/Moroccan Corporate Payment & Receipt Portal (/p/inv/{motif} & /p/avis/{bank_tx_id})
+public_router = build_public_renderer_router(
+    get_database(),
+    rib_formatted=CFG_RIB_RAW,
+    rib_clean=CFG_RIB_CLEAN,
+    beneficiary=BENEFICIARY_NAME,
+    client_code=CLIENT_CODE,
+    user_id=USER_ID,
+)
+app.include_router(public_router)
+
 
 
 @app.get("/app", response_class=HTMLResponse, tags=["Dashboard UI"])

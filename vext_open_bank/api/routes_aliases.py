@@ -47,6 +47,60 @@ class LegacySimulateRequest(BaseModel):
     bank_tx_id: Optional[str] = None
 
 
+class LegacyEnvoiSmsTopupRequest(BaseModel):
+    order_id: str = Field(..., examples=["12345"])
+    amount_dh: Any = Field(..., examples=["2500.00"])
+    client_id: str = Field(default="envoisms_client")
+    callback_url: str
+
+
+class LegacySoumitSubscriptionRequest(BaseModel):
+    reference: str = Field(..., examples=["SOU-9981", "BC-4410"])
+    montant_ttc: Any = Field(..., examples=["4800.00"])
+    entreprise_id: str = Field(default="soumit_org")
+    webhook_endpoint: str
+
+
+@router.post("/envoisms/topup", tags=["Legacy Invoicing Aliases"])
+def legacy_envoisms_bridge(
+    req: LegacyEnvoiSmsTopupRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    auth: TenantConfig = Depends(require_tenant),
+):
+    raw_id = req.order_id.upper()
+    motif = raw_id if raw_id.startswith("ENV-") else f"ENV-{raw_id}"
+    unified_req = UniversalCheckBody(
+        invoice_id=req.order_id,
+        motif=motif,
+        reference=motif,
+        amount_mad=req.amount_dh,
+        customer_ref=req.client_id,
+        webhook_url=req.callback_url,
+        metadata={"legacy_bridge": "envoisms"},
+    )
+    return check_or_upsert_invoice(unified_req, idempotency_key=idempotency_key, auth=auth)
+
+
+@router.post("/soumit/subscription", tags=["Legacy Invoicing Aliases"])
+def legacy_soumit_bridge(
+    req: LegacySoumitSubscriptionRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    auth: TenantConfig = Depends(require_tenant),
+):
+    raw_ref = req.reference.upper()
+    motif = raw_ref if raw_ref.startswith(("SOU-", "BC-")) else f"SOU-{raw_ref}"
+    unified_req = UniversalCheckBody(
+        invoice_id=req.reference,
+        motif=motif,
+        reference=motif,
+        amount_mad=req.montant_ttc,
+        customer_ref=req.entreprise_id,
+        webhook_url=req.webhook_endpoint,
+        metadata={"legacy_bridge": "soumit"},
+    )
+    return check_or_upsert_invoice(unified_req, idempotency_key=idempotency_key, auth=auth)
+
+
 @router.get("/v2/invoices/instructions", tags=["Universal Invoicing Engine Aliases"])
 def get_v2_invoice_instructions(
     reference: str = Query(...),

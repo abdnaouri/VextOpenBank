@@ -4,7 +4,13 @@ import sqlite3
 from typing import Generator
 from contextlib import contextmanager
 
+from vext_open_bank.core.db import Database, SCHEMA_SQL
+
 DATABASE_PATH = os.getenv("VEXT_DB_PATH", "/tmp/vext_envoisms_reconciliation.db")
+
+# Global singleton Database instance ensuring serialized write-locking & immediate WAL execution
+_global_db = Database(DATABASE_PATH)
+
 
 def init_db(db_path: str = DATABASE_PATH) -> None:
     """Initialize SQLite database with WAL pragmas and unified engine schema."""
@@ -119,9 +125,24 @@ def init_db(db_path: str = DATABASE_PATH) -> None:
             )
         """)
 
+        # Legacy Reconciliation Exceptions (Dead-Letter Table)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS reconciliation_exceptions (
+                id TEXT PRIMARY KEY,
+                bank_tx_id TEXT,
+                raw_transfer_json TEXT,
+                failure_reason TEXT NOT NULL,
+                attempt_count INTEGER DEFAULT 1,
+                last_attempt_at TEXT NOT NULL,
+                resolved INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
     finally:
         conn.close()
+
 
 def get_connection(db_path: str = DATABASE_PATH) -> sqlite3.Connection:
     """Provide a SQLite connection configured with WAL pragmas."""
@@ -132,6 +153,7 @@ def get_connection(db_path: str = DATABASE_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
+
 @contextmanager
 def db_session(db_path: str = DATABASE_PATH) -> Generator[sqlite3.Connection, None, None]:
     conn = get_connection(db_path)
@@ -139,3 +161,8 @@ def db_session(db_path: str = DATABASE_PATH) -> Generator[sqlite3.Connection, No
         yield conn
     finally:
         conn.close()
+
+
+def get_database() -> Database:
+    """Return singleton Database instance with BEGIN IMMEDIATE write serialization."""
+    return _global_db
