@@ -150,6 +150,12 @@ class Database:
                     conn.execute("ALTER TABLE invoices ADD COLUMN paid_centimes INTEGER DEFAULT 0;")
                 if "currency" not in inv_cols:
                     conn.execute("ALTER TABLE invoices ADD COLUMN currency TEXT DEFAULT 'MAD';")
+                if "subtotal_centimes" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN subtotal_centimes INTEGER DEFAULT 0;")
+                if "tax_centimes" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN tax_centimes INTEGER DEFAULT 0;")
+                if "expires_at" not in inv_cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN expires_at TEXT;")
                 if "state" not in inv_cols:
                     conn.execute("ALTER TABLE invoices ADD COLUMN state TEXT DEFAULT 'AWAITING_TRANSFER';")
                 if "receiving_account_id" not in inv_cols:
